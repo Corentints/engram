@@ -16,7 +16,7 @@ export interface InstallArgs {
   branch: string | undefined
 }
 
-export const run = (args: InstallArgs): Effect.Effect<void, EngramError> =>
+export const run = (args: InstallArgs) =>
   Effect.gen(function* () {
     const branch = args.branch ?? "main";
     const config = yield* loadConfig();

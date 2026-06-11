@@ -127,7 +127,7 @@ Effect.suspend(() => cli(process.argv)).pipe(
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function wrap(effect: Effect.Effect<void, EngramError>): Effect.Effect<void> {
+function wrap<R>(effect: Effect.Effect<void, EngramError, R>): Effect.Effect<void, never, R> {
   return effect.pipe(
     Effect.catchAll((e) =>
       Console.error(`error: ${e.message}`).pipe(

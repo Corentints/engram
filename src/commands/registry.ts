@@ -21,7 +21,7 @@ export function deriveRegistryName(url: string): string {
   return url.split("/").filter(Boolean).pop()?.replace(/\.git$/, "") ?? url;
 }
 
-export const add = (urlOrShorthand: string, registryPath: string): Effect.Effect<void, EngramError> =>
+export const add = (urlOrShorthand: string, registryPath: string) =>
   Effect.gen(function* () {
     const url = resolveUrl(urlOrShorthand);
     const name = deriveRegistryName(url);

@@ -1,9 +1,8 @@
 import { Console, Effect } from "effect";
 import { loadManifest } from "../manifest.js";
 import { run as installRun } from "./install.js";
-import { EngramError } from "../errors.js";
 
-export const run = (dir: string | undefined): Effect.Effect<void, EngramError> =>
+export const run = (dir: string | undefined) =>
   Effect.gen(function* () {
     const projectDir = dir ?? process.cwd();
     const manifest = yield* loadManifest(projectDir);
