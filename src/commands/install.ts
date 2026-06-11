@@ -1,11 +1,11 @@
 import { Console, Effect } from "effect";
-import { checkbox } from "@inquirer/prompts";
+import { multiselect, isCancel } from "@clack/prompts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadConfig } from "../config.js";
+import { loadConfig, type RegistryEntry } from "../config.js";
 import { loadManifest, saveManifest } from "../manifest.js";
-import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir, type Provider } from "../providers.js";
+import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir, type Provider } from "../providers/index.js";
 import { copyDir, resolveRemoteSha, sparseCheckout } from "../git.js";
 import { EngramError } from "../errors.js";
 
@@ -18,16 +18,14 @@ export interface InstallArgs {
 
 export const run = (args: InstallArgs): Effect.Effect<void, EngramError> =>
   Effect.gen(function* () {
-    const [registryName, skillName] = yield* parseSkillRef(args.skillRef);
     const branch = args.branch ?? "main";
-
     const config = yield* loadConfig();
+    const [registryName, skillRelPath] = yield* parseSkillRef(args.skillRef, config.registries);
+
     const registry = config.registries[registryName];
     if (!registry) {
       return yield* Effect.fail(
-        new EngramError({
-          message: `registry '${registryName}' not configured. Run \`engram registry add\` first.`,
-        }),
+        new EngramError({ message: `registry '${registryName}' not configured. Run \`engram registry add\` first.` }),
       );
     }
 
@@ -37,29 +35,30 @@ export const run = (args: InstallArgs): Effect.Effect<void, EngramError> =>
     yield* Console.log(`Resolving ${args.skillRef} from ${registry.url}...`);
     const sha = yield* resolveRemoteSha(registry.url, branch);
 
-    const skillPath =
-      registry.path === "." ? skillName : `${registry.path.replace(/\/$/, "")}/${skillName}`;
+    const repoSkillPath =
+      registry.path === "." ? skillRelPath : `${registry.path.replace(/\/$/, "")}/${skillRelPath}`;
 
-    const tmpDir = path.join(os.tmpdir(), "engram", `${registryName}-${skillName}`);
+    const safeName = `${registryName}-${skillRelPath}`.replace(/\//g, "-");
+    const tmpDir = path.join(os.tmpdir(), "engram", safeName);
     yield* Console.log(`Fetching skill (sparse checkout)...`);
-    yield* sparseCheckout(registry.url, skillPath, sha, tmpDir);
+    yield* sparseCheckout(registry.url, repoSkillPath, sha, tmpDir);
 
-    const skillSrc = path.join(tmpDir, skillPath);
+    const skillSrc = path.join(tmpDir, repoSkillPath);
     const exists = yield* Effect.tryPromise({
       try: () => fs.access(skillSrc).then(() => true).catch(() => false),
       catch: (e) => new EngramError({ message: String(e) }),
     });
     if (!exists) {
       return yield* Effect.fail(
-        new EngramError({ message: `skill path '${skillPath}' not found in repository` }),
+        new EngramError({ message: `skill path '${repoSkillPath}' not found in repository` }),
       );
     }
 
     for (const provider of providers) {
       const dest =
         scope === "global"
-          ? path.join(globalSkillsDir(provider), skillName)
-          : path.join(projectSkillsDir(provider, process.cwd()), skillName);
+          ? path.join(globalSkillsDir(provider), skillRelPath)
+          : path.join(projectSkillsDir(provider, process.cwd()), skillRelPath);
 
       const destExists = yield* Effect.tryPromise({
         try: () => fs.access(dest).then(() => true).catch(() => false),
@@ -77,31 +76,34 @@ export const run = (args: InstallArgs): Effect.Effect<void, EngramError> =>
       yield* Console.log(`✓ Installed for ${provider} at ${dest}`);
     }
 
-    yield* Effect.tryPromise({
-      try: () => fs.rm(tmpDir, { recursive: true, force: true }),
-      catch: () => undefined as never,
-    });
+    yield* Effect.promise(() => fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {}));
 
     if (scope === "project") {
       const cwd = process.cwd();
       const manifest = yield* loadManifest(cwd);
       const skillEntry: import("../manifest.js").SkillEntry = { providers };
       if (branch !== "main") skillEntry.branch = branch;
-      manifest.skills[`${registryName}/${skillName}`] = skillEntry;
+      manifest.skills[args.skillRef] = skillEntry;
       yield* saveManifest(cwd, manifest);
     }
   });
 
-function parseSkillRef(skillRef: string): Effect.Effect<[string, string], EngramError> {
-  const parts = skillRef.split("/");
-  if (parts.length < 2 || !parts[0] || !parts[1]) {
-    return Effect.fail(
-      new EngramError({
-        message: `invalid skill reference '${skillRef}' — expected format: registry/skill`,
-      }),
-    );
+export function parseSkillRef(
+  skillRef: string,
+  registries: Record<string, RegistryEntry>,
+): Effect.Effect<[string, string], EngramError> {
+  const sortedNames = Object.keys(registries).sort((a, b) => b.length - a.length);
+  for (const name of sortedNames) {
+    if (skillRef.startsWith(name + "/")) {
+      const skillRelPath = skillRef.slice(name.length + 1);
+      if (skillRelPath) return Effect.succeed([name, skillRelPath]);
+    }
   }
-  return Effect.succeed([parts[0], parts[1]]);
+  return Effect.fail(
+    new EngramError({
+      message: `unknown registry in '${skillRef}' — run \`engram registry add\` first`,
+    }),
+  );
 }
 
 function resolveProviders(raw: string[]): Effect.Effect<Provider[], EngramError> {
@@ -110,12 +112,13 @@ function resolveProviders(raw: string[]): Effect.Effect<Provider[], EngramError>
   }
   return Effect.tryPromise({
     try: async () => {
-      const selected = await checkbox<Provider>({
+      const result = await multiselect<Provider>({
         message: "Select providers to install for",
-        choices: ALL_PROVIDERS.map((p) => ({ name: p, value: p })),
+        options: ALL_PROVIDERS.map((p) => ({ value: p, label: p })),
+        required: true,
       });
-      if (selected.length === 0) throw new Error("no providers selected");
-      return selected;
+      if (isCancel(result)) throw new Error("cancelled");
+      return result;
     },
     catch: (e) => new EngramError({ message: String(e) }),
   });

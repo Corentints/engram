@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Effect } from "effect";
 import * as path from "node:path";
 import * as os from "node:os";
-import { parseProvider, globalSkillsDir, projectSkillsDir } from "../providers.js";
+import { parseProvider, globalSkillsDir, projectSkillsDir } from "../providers/index.js";
 
 const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromise(effect);
 const runFail = <A, E>(effect: Effect.Effect<A, E>): Promise<E> =>

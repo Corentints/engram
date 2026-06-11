@@ -15,11 +15,21 @@ import * as SearchCmd from "./commands/search.js";
 const registryAddCmd = Command.make(
   "add",
   {
-    name: Args.text({ name: "name" }),
     url: Args.text({ name: "url" }),
     path: Options.withDefault(Options.text("path"), "."),
   },
-  ({ name, url, path }) => wrap(RegistryCmd.add(name, url, path)),
+  ({ url, path }) => wrap(RegistryCmd.add(url, path)),
+);
+
+// ── add (shorthand) ───────────────────────────────────────────────────────────
+
+const addCmd = Command.make(
+  "add",
+  {
+    ref: Args.text({ name: "owner/repo" }),
+    path: Options.withDefault(Options.text("path"), "."),
+  },
+  ({ ref, path }) => wrap(RegistryCmd.add(ref, path)),
 );
 
 const registryListCmd = Command.make("list", {}, () => wrap(RegistryCmd.list()));
@@ -98,6 +108,7 @@ const searchCmd = Command.make(
 
 const engramCmd = Command.make("engram", {}, () => Effect.void).pipe(
   Command.withSubcommands([
+    addCmd,
     registryCmd,
     installCmd,
     listCmd,

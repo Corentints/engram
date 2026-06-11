@@ -1,8 +1,11 @@
 import { Console, Effect } from "effect";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { loadConfig } from "../config.js";
 import { loadManifest, saveManifest } from "../manifest.js";
-import { globalSkillsDir, parseProvider, projectSkillsDir } from "../providers.js";
+import { globalSkillsDir, parseProvider, projectSkillsDir } from "../providers/index.js";
 import { EngramError } from "../errors.js";
+import { parseSkillRef } from "./install.js";
 
 export const run = (
   skillRef: string,
@@ -10,13 +13,14 @@ export const run = (
   keepFiles: boolean,
 ): Effect.Effect<void, EngramError> =>
   Effect.gen(function* () {
-    const skillName = skillRef.includes("/") ? skillRef.split("/")[1] ?? skillRef : skillRef;
+    const config = yield* loadConfig();
+    const [, skillRelPath] = yield* parseSkillRef(skillRef, config.registries);
 
     if (!keepFiles) {
       if (scope === "global") {
-        yield* removeGlobalFiles(skillName);
+        yield* removeGlobalFiles(skillRelPath);
       } else {
-        yield* removeProjectFiles(skillRef, skillName);
+        yield* removeProjectFiles(skillRef, skillRelPath);
       }
     }
 
@@ -34,11 +38,11 @@ export const run = (
     }
   });
 
-function removeGlobalFiles(skillName: string): Effect.Effect<void, EngramError> {
+function removeGlobalFiles(skillRelPath: string): Effect.Effect<void, EngramError> {
   return Effect.gen(function* () {
     for (const providerName of ["claude", "copilot"] as const) {
       const provider = yield* parseProvider(providerName);
-      const dest = globalSkillsDir(provider) + "/" + skillName;
+      const dest = path.join(globalSkillsDir(provider), skillRelPath);
       const exists = yield* Effect.tryPromise({
         try: () => fs.access(dest).then(() => true).catch(() => false),
         catch: (e) => new EngramError({ message: String(e) }),
@@ -54,7 +58,7 @@ function removeGlobalFiles(skillName: string): Effect.Effect<void, EngramError> 
   });
 }
 
-function removeProjectFiles(skillRef: string, skillName: string): Effect.Effect<void, EngramError> {
+function removeProjectFiles(skillRef: string, skillRelPath: string): Effect.Effect<void, EngramError> {
   return Effect.gen(function* () {
     const cwd = process.cwd();
     const manifest = yield* loadManifest(cwd);
@@ -66,7 +70,7 @@ function removeProjectFiles(skillRef: string, skillName: string): Effect.Effect<
     }
     for (const providerName of entry.providers ?? []) {
       const provider = yield* parseProvider(providerName);
-      const dest = projectSkillsDir(provider, cwd) + "/" + skillName;
+      const dest = path.join(projectSkillsDir(provider, cwd), skillRelPath);
       const exists = yield* Effect.tryPromise({
         try: () => fs.access(dest).then(() => true).catch(() => false),
         catch: (e) => new EngramError({ message: String(e) }),
