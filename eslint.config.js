@@ -13,5 +13,9 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    rules: {
+      semi: ["error", "always"],
+      "padded-blocks": ["error", "never"],
+    },
   }
 );
