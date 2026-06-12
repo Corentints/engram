@@ -26,25 +26,39 @@ describe("loadManifest", () => {
   it("parses a full skill entry", async () => {
     const data = {
       skills: {
-        "my-skill": { branch: "main", providers: ["claude", "copilot"] },
+        "owner/repo/my-skill": {
+          source: "owner/repo",
+          skill: "my-skill",
+          sha: "abc123",
+          branch: "main",
+          path: "skills",
+          providers: ["claude", "copilot"],
+        },
       },
     };
     await fs.writeFile(path.join(tmp, MANIFEST_FILE), JSON.stringify(data));
 
     const manifest = await run(loadManifest(tmp));
-    expect(manifest.skills["my-skill"]).toEqual({ branch: "main", providers: ["claude", "copilot"] });
+    expect(manifest.skills["owner/repo/my-skill"]).toEqual({
+      source: "owner/repo",
+      skill: "my-skill",
+      sha: "abc123",
+      branch: "main",
+      path: "skills",
+      providers: ["claude", "copilot"],
+    });
   });
 
-  it("parses a skill entry with no branch or providers", async () => {
-    const data = { skills: { bare: {} } };
+  it("parses a minimal skill entry (source + skill only)", async () => {
+    const data = { skills: { "o/r/bare": { source: "o/r", skill: "bare" } } };
     await fs.writeFile(path.join(tmp, MANIFEST_FILE), JSON.stringify(data));
 
     const manifest = await run(loadManifest(tmp));
-    expect(manifest.skills["bare"]).toEqual({});
+    expect(manifest.skills["o/r/bare"]).toEqual({ source: "o/r", skill: "bare" });
   });
 
   it("ignores invalid branch type", async () => {
-    const data = { skills: { s: { branch: 42 } } };
+    const data = { skills: { s: { source: "o/r", skill: "s", branch: 42 } } };
     await fs.writeFile(path.join(tmp, MANIFEST_FILE), JSON.stringify(data));
 
     const manifest = await run(loadManifest(tmp));
@@ -61,8 +75,8 @@ describe("saveManifest / loadManifest roundtrip", () => {
   it("persists and restores a manifest", async () => {
     const original = {
       skills: {
-        foo: { branch: "dev", providers: ["claude"] },
-        bar: {},
+        "o/r/foo": { source: "o/r", skill: "foo", branch: "dev", providers: ["claude"] },
+        "o/r/bar": { source: "o/r", skill: "bar" },
       },
     };
 
@@ -72,9 +86,9 @@ describe("saveManifest / loadManifest roundtrip", () => {
     expect(loaded).toEqual(original);
   });
 
-  it("omits undefined fields from JSON output", async () => {
-    await run(saveManifest(tmp, { skills: { s: {} } }));
+  it("omits undefined optional fields from JSON output", async () => {
+    await run(saveManifest(tmp, { skills: { s: { source: "o/r", skill: "s" } } }));
     const raw = JSON.parse(await fs.readFile(path.join(tmp, MANIFEST_FILE), "utf-8")) as { skills: Record<string, Record<string, unknown>> };
-    expect(Object.keys(raw.skills["s"] ?? {})).toHaveLength(0);
+    expect(Object.keys(raw.skills["s"] ?? {}).sort()).toEqual(["skill", "source"]);
   });
 });

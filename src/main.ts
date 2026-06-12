@@ -6,66 +6,52 @@ import * as NodeContext from "@effect/platform-node/NodeContext";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { Console, Effect, Option } from "effect";
 import { EngramError } from "./errors.js";
-import * as RegistryCmd from "./commands/registry.js";
+import * as AddCmd from "./commands/add.js";
 import * as InstallCmd from "./commands/install.js";
 import * as ListCmd from "./commands/list.js";
 import * as RemoveCmd from "./commands/remove.js";
 import * as SyncCmd from "./commands/sync.js";
 import * as SearchCmd from "./commands/search.js";
 
-// ── registry ──────────────────────────────────────────────────────────────────
-
-const registryAddCmd = Command.make(
-  "add",
-  {
-    url: Args.text({ name: "url" }),
-    path: Options.withDefault(Options.text("path"), "."),
-  },
-  ({ url, path }) => wrap(RegistryCmd.add(url, path)),
-);
-
-// ── add (shorthand) ───────────────────────────────────────────────────────────
+// ── add ───────────────────────────────────────────────────────────────────────
 
 const addCmd = Command.make(
   "add",
   {
-    ref: Args.text({ name: "owner/repo" }),
+    source: Args.text({ name: "owner/repo" }),
+    skill: Options.withDefault(Options.text("skill"), ""),
+    provider: Options.withDefault(Options.text("provider"), ""),
+    scope: Options.withDefault(Options.text("scope"), "global"),
+    branch: Options.optional(Options.text("branch")),
     path: Options.withDefault(Options.text("path"), "."),
   },
-  ({ ref, path }) => wrap(RegistryCmd.add(ref, path)),
+  ({ source, skill, provider, scope, branch, path }) =>
+    wrap(
+      AddCmd.run({
+        source,
+        skill,
+        providers: InstallCmd.parseProviderList(provider),
+        scope,
+        branch: Option.getOrUndefined(branch),
+        path,
+      }),
+    ),
 );
 
-const registryListCmd = Command.make("list", {}, () => wrap(RegistryCmd.list()));
-
-const registryRemoveCmd = Command.make(
-  "remove",
-  { name: Args.text({ name: "name" }) },
-  ({ name }) => wrap(RegistryCmd.remove(name)),
-);
-
-const registryCmd = Command.make("registry", {}, () => Effect.void).pipe(
-  Command.withSubcommands([registryAddCmd, registryListCmd, registryRemoveCmd]),
-);
-
-// ── install ───────────────────────────────────────────────────────────────────
+// ── install (direct, non-interactive) ─────────────────────────────────────────
 
 const installCmd = Command.make(
   "install",
   {
-    skillRef: Args.text({ name: "skill-ref" }),
+    source: Args.text({ name: "owner/repo" }),
+    skill: Args.text({ name: "skill" }),
     provider: Options.withDefault(Options.text("provider"), ""),
     scope: Options.withDefault(Options.text("scope"), "global"),
     branch: Options.optional(Options.text("branch")),
+    path: Options.withDefault(Options.text("path"), "."),
   },
-  ({ skillRef, provider, scope, branch }) =>
-    wrap(
-      InstallCmd.run({
-        skillRef,
-        providers: provider ? provider.split(",").map((s) => s.trim()).filter(Boolean) : [],
-        scope,
-        branch: Option.getOrUndefined(branch),
-      }),
-    ),
+  ({ source, skill, provider, scope, branch, path }) =>
+    wrap(InstallCmd.runInstall(source, skill, provider, scope, Option.getOrUndefined(branch), path)),
 );
 
 // ── list ──────────────────────────────────────────────────────────────────────
@@ -81,11 +67,11 @@ const listCmd = Command.make(
 const removeCmd = Command.make(
   "remove",
   {
-    skillRef: Args.text({ name: "skill-ref" }),
+    ref: Args.text({ name: "skill-ref" }),
     scope: Options.withDefault(Options.text("scope"), "global"),
     keepFiles: Options.boolean("keep-files"),
   },
-  ({ skillRef, scope, keepFiles }) => wrap(RemoveCmd.run(skillRef, scope, keepFiles)),
+  ({ ref, scope, keepFiles }) => wrap(RemoveCmd.run(ref, scope, keepFiles)),
 );
 
 // ── sync ──────────────────────────────────────────────────────────────────────
@@ -101,24 +87,17 @@ const syncCmd = Command.make(
 const searchCmd = Command.make(
   "search",
   {
-    query: Args.text({ name: "query" }),
-    registry: Options.optional(Options.text("registry")),
+    source: Args.text({ name: "owner/repo" }),
+    query: Args.optional(Args.text({ name: "query" })),
+    path: Options.withDefault(Options.text("path"), "."),
   },
-  ({ query, registry }) => wrap(SearchCmd.run(query, Option.getOrUndefined(registry))),
+  ({ source, query, path }) => wrap(SearchCmd.run(source, Option.getOrUndefined(query), path)),
 );
 
 // ── root ──────────────────────────────────────────────────────────────────────
 
 const engramCmd = Command.make("engram", {}, () => Effect.void).pipe(
-  Command.withSubcommands([
-    addCmd,
-    registryCmd,
-    installCmd,
-    listCmd,
-    removeCmd,
-    syncCmd,
-    searchCmd,
-  ]),
+  Command.withSubcommands([addCmd, installCmd, listCmd, removeCmd, syncCmd, searchCmd]),
 );
 
 const cli = Command.run(engramCmd, { name: "engram", version: "0.1.0" });

@@ -29,11 +29,10 @@ Ce sont donc des **concurrents directs**. Vercel `skills` est nettement plus mat
 
 ### engram (notre système)
 - CLI Node/TypeScript exécutée via `tsx`, packagée pour `npx engram`, bâtie sur **Effect-TS** (`@effect/cli`, `@effect/platform`).
-- Commandes : `registry add/list/remove`, `add` (raccourci), `install`, `sync`, `list`, `remove`, `search`.
-- Concept central de **registry nommé** : on enregistre d'abord un dépôt git (`engram registry add`), puis on installe via une référence `registry/skill`.
-- Config globale : `~/.config/engram/config.json` (liste des registries).
-- Manifeste projet : `engram.json` (skills déclarés + providers + branche).
-- Installation par **copie** (`copyDir`), via **sparse-checkout** git (`--filter=blob:none --depth=1`).
+- Commandes : `add` (liste + sélection interactive), `install` (direct), `sync`, `list`, `remove`, `search`.
+- Modèle **zéro-config** : `engram add owner/repo` clone le repo et liste tous les skills (plus de registry à enregistrer, plus de `config.json`).
+- Manifeste projet : `engram.json` — par skill : `source`, `skill`, `sha` (pinné), `providers`, `branch`/`path` optionnels.
+- Installation par **store canonique + symlinks** (fallback copie), via **sparse-checkout / fetch-par-SHA** git (`--filter=blob:none --depth=1`).
 - **2 providers** supportés : `claude` et `copilot`.
 
 ---
@@ -45,12 +44,12 @@ Ce sont donc des **concurrents directs**. Vercel `skills` est nettement plus mat
 | **Maturité** | v1.x, 22k★, large adoption | v0.1.0, jeune |
 | **Stack** | TypeScript « classique » | TypeScript + **Effect-TS** |
 | **Standard de skill** | `SKILL.md` + frontmatter YAML | `<skill>.md` (open agent skills spec) |
-| **Modèle de source** | URL/raccourci git, local, npm-like, chemins imbriqués | **Registry nommé** (git) enregistré au préalable |
-| **Découverte** | Registre central **skills.sh** + `find` | `search` local sur les registries configurés (clone + `ls-tree`) |
-| **Stockage** | **Symlink** vers store canonique (ou copie) | **Copie** uniquement |
-| **Manifeste projet** | `skills-lock.json` (avec hash) | `engram.json` (sans hash) |
-| **Lockfile / intégrité** | ✅ hash + `skills check`/`update` | ❌ pas de pinning, `sync` reprend le dernier commit |
-| **Versioning** | hash + détection de mises à jour via API Vercel | branche uniquement (`--branch`), pas de SHA pin |
+| **Modèle de source** | URL/raccourci git, local, npm-like, chemins imbriqués | Repo git direct (`engram add owner/repo`), zéro-config — _aligné depuis le retrait des registries_ |
+| **Découverte** | Registre central **skills.sh** + `find` | `search owner/repo` (clone + `ls-tree`), pas d'annuaire central |
+| **Stockage** | **Symlink** vers store canonique (ou copie) | **Symlink** vers store canonique + fallback copie ✅ |
+| **Manifeste projet** | `skills-lock.json` (avec hash) | `engram.json` (source + **SHA pinné**) |
+| **Lockfile / intégrité** | ✅ hash + `skills check`/`update` | ✅ SHA pinné, `sync` reproductible (fetch-par-SHA) |
+| **Versioning** | hash + détection de mises à jour via API Vercel | SHA pin + branche ; pas encore de commande `update`/`check` |
 | **Scopes** | projet (défaut) / global (`-g`) | projet / global (défaut **global**) |
 | **Agents/providers** | **70+** | **2** (claude, copilot) |
 | **Récupération git** | clone + symlink/copie | **sparse-checkout** (efficace en bande passante) |
@@ -68,13 +67,13 @@ Ce sont donc des **concurrents directs**. Vercel `skills` est nettement plus mat
 - **Nuance :** Vercel impose la convention de nom `SKILL.md` et gère des métadonnées additionnelles (`metadata.internal` pour masquer un skill de la découverte). engram cherche un `<nom-du-skill>.md` à l'intérieur du dossier — convention différente, légèrement moins standard.
 - **Opportunité engram :** s'aligner explicitement sur `SKILL.md` améliorerait l'interopérabilité avec l'écosystème skills.sh (un skill publié pour Vercel serait directement installable par engram).
 
-### 4.2 Sources & modèle de registry
-C'est la **divergence conceptuelle majeure**.
+### 4.2 Sources & modèle de source
+Les deux outils sont désormais **alignés sur un modèle zéro-config**.
 
-- **Vercel** : pas de notion de registry à pré-enregistrer. On pointe directement une source à chaque commande (`npx skills add vercel-labs/agent-skills`). La centralisation se fait côté serveur via skills.sh.
-- **engram** : modèle « package manager » plus classique — on **déclare des registries nommés** une fois (`engram registry add myorg git@…`), puis on référence `myorg/skill`. Le manifeste `engram.json` stocke ces références courtes.
+- **Vercel** : on pointe directement une source à chaque commande (`npx skills add vercel-labs/agent-skills`). La centralisation se fait côté serveur via skills.sh.
+- **engram** (depuis le retrait des registries) : `engram add owner/repo` clone le repo, **liste tous les skills** et installe la sélection. Plus de registry nommé à pré-enregistrer, plus de `config.json`. La source (`owner/repo` ou URL) et le **SHA pinné** sont écrits par skill dans `engram.json`, ce qui conserve la reproductibilité d'équipe via `sync`.
 
-**Analyse :** l'approche engram est plus proche d'un `npm`/`cargo` (registries + noms courts, reproductibilité d'équipe via `engram.json` + `sync`). C'est un **vrai point fort** pour les usages d'équipe/monorepo. L'approche Vercel est plus « zéro-config » et bénéficie d'un annuaire central que nous n'avons pas.
+**Analyse :** engram combine maintenant le zéro-config de Vercel **et** un manifeste pinné par SHA pour la reproductibilité d'équipe. La seule différence structurante restante côté découverte est l'**annuaire central** skills.sh, qu'engram n'a pas (la découverte reste repo-par-repo via `search owner/repo`).
 
 ### 4.3 Installation & stockage
 - **engram** copie physiquement les fichiers du skill dans chaque répertoire provider (`~/.claude/skills/<skill>`, `.claude/skills/<skill>`, etc.) via `copyDir`. Conséquence : **duplication** si un skill est installé pour plusieurs providers, et pas de source unique de vérité.
@@ -114,21 +113,19 @@ C'est la **divergence conceptuelle majeure**.
 ## 5. Forces & faiblesses d'engram (synthèse)
 
 ### Points forts
-1. **Modèle de registry nommé + manifeste `engram.json` + `sync`** : excellente reproductibilité d'équipe, proche d'un vrai gestionnaire de paquets.
-2. **Sparse-checkout git** : récupération économe en bande passante.
-3. **Architecture provider extensible** (`ProviderDef`) : ajout d'agents trivial.
-4. **Effect-TS** : erreurs typées, composition robuste, bonne testabilité (suite de tests présente).
-5. **UX interactive soignée** (`@clack/prompts`, sélection groupée des skills).
-6. **Aucune télémétrie** : argument confidentialité.
+1. **Zéro-config + manifeste `engram.json` pinné par SHA + `sync`** : `engram add owner/repo` sans pré-enregistrement, tout en gardant une reproductibilité d'équipe stricte (source + SHA par skill).
+2. **Store canonique + symlinks** (fallback copie) : source unique de vérité, mises à jour atomiques.
+3. **Sparse-checkout / fetch-par-SHA git** : récupération économe en bande passante, pin sur commit arbitraire.
+4. **Architecture provider extensible** (`ProviderDef`) : ajout d'agents trivial.
+5. **Effect-TS** : erreurs typées, composition robuste, bonne testabilité (suite de tests présente).
+6. **UX interactive soignée** (`@clack/prompts`, sélection groupée des skills).
+7. **Aucune télémétrie** : argument confidentialité.
 
 ### Faiblesses / dettes vs Vercel
-1. **Pas de lockfile à hash/SHA** → reproductibilité incomplète (alors que le SHA est déjà résolu à l'install : quick win).
-2. **Stockage par copie** au lieu d'un store canonique + symlinks → duplication, mises à jour lourdes.
-3. **2 providers** vs 70+.
-4. **Pas de découverte centralisée** (équivalent skills.sh).
-5. **Convention `<nom>.md`** au lieu de `SKILL.md` → interop moindre.
-6. **Pas de commande `update`/`check`** non-destructive.
-7. **Dépendances lourdes inutilisées** dans le `package.json`.
+1. **2 providers** vs 70+.
+2. **Pas de découverte centralisée** (équivalent skills.sh) — la découverte reste repo-par-repo.
+3. **Convention `<nom>.md`** au lieu de `SKILL.md` → interop moindre.
+4. **Pas de commande `update`/`check`** non-destructive (le SHA pin existe, mais pas la détection de mises à jour).
 
 ---
 
@@ -141,6 +138,7 @@ Par ordre rapport impact/effort :
 | 🟢 Quick win | **Persister le SHA résolu dans `engram.json`** (déjà calculé par `resolveRemoteSha`) | Vrai lockfile, reproductibilité au commit | ✅ **Fait** — champ `sha`, `sync` réinstalle le commit pinné (fetch-par-SHA) |
 | 🟠 Structurant | **Store canonique + symlinks** (fallback copie) | Source unique de vérité, mises à jour atomiques | ✅ **Fait** — store `~/.local/share/engram/store/`, symlinks + fallback copie |
 | 🟢 Quick win | **Élaguer les dépendances inutilisées** | Poids `npx`, surface de maintenance | ✅ **Fait** — 7 deps retirées (`cluster`, `experimental`, `rpc`, `sql`, `workflow`, `ioredis`, `lmdb`) ; imports `@effect/platform-node` par sous-chemin pour éviter le barrel cluster |
+| 🟢 Refonte | **Retirer la notion de registry** (`add owner/repo` liste les skills) | Zéro-config façon Vercel, source + SHA stockés dans `engram.json` | ✅ **Fait** — suppression de `engram registry` et de `config.ts` ; `add`/`install`/`search`/`sync`/`remove` repassés sur des sources directes |
 | 🟢 Quick win | **Aligner sur `SKILL.md`** (accepter `SKILL.md` en plus de `<nom>.md`) | Interop directe avec l'écosystème skills.sh | À faire |
 | 🟡 Moyen | **Ajouter des providers** (Cursor, Cline, Windsurf, Gemini CLI…) | Combler l'écart d'adoption, coût faible grâce à `ProviderDef` | À faire |
 | 🟡 Moyen | **Commande `update`/`check`** comparant SHA/hash local vs upstream | Mises à jour non-destructives | À faire |
@@ -149,7 +147,7 @@ Par ordre rapport impact/effort :
 > Note : `@effect/printer`, `@effect/printer-ansi` et `@effect/typeclass` sont **conservés** — ce sont des peer-deps réellement requises par `@effect/cli` pour le rendu de l'aide (et non du code mort).
 
 ### Positionnement différenciant suggéré
-engram peut se distinguer **non pas en imitant skills.sh**, mais en assumant un angle « **package manager rigoureux, privacy-first, orienté équipe/monorepo** » : registries privés first-class, lockfile à hash, zéro télémétrie, reproductibilité stricte via `engram.json` + `sync`. C'est précisément le terrain où le modèle de registry nommé et Effect-TS donnent un avantage, là où Vercel optimise pour le « zéro-config + annuaire public ».
+engram peut se distinguer **non pas en imitant skills.sh**, mais en assumant un angle « **package manager rigoureux, privacy-first, orienté équipe/monorepo** » : zéro-config (`add owner/repo`), manifeste pinné par SHA, zéro télémétrie, reproductibilité stricte via `engram.json` + `sync`. C'est précisément le terrain où le lockfile SHA et Effect-TS donnent un avantage, là où Vercel optimise pour le « zéro-config + annuaire public ».
 
 ---
 
