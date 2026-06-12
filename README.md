@@ -15,7 +15,7 @@ engram --help
 
 ## Concepts
 
-- **Skill** — a folder of instructions and resources that an AI agent loads (follows the [open agent skills standard](https://github.com/agentskills/spec))
+- **Skill** — a folder of instructions and resources that an AI agent loads (follows the [open agent skills standard](https://github.com/agentskills/agentskills))
 - **Source** — a git repository that holds skills. Reference it as a GitHub shorthand (`owner/repo`) or any clonable git URL (`https://…`, `git@…`, `ssh://…`, `file://…`)
 - **Provider** — the AI tool a skill is installed for: `claude` or `copilot`
 - **Scope** — `global` (available across all projects) or `project` (committed to the current repo)
