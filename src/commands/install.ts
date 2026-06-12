@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { loadConfig, type RegistryEntry } from "../config.js";
 import { loadManifest, saveManifest } from "../manifest.js";
 import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir, type Provider } from "../providers/index.js";
-import { copyDir, resolveRemoteSha, sparseCheckout } from "../git.js";
+import { copyDir, linkSkill, resolveRemoteSha, sparseCheckout, storeDir } from "../git.js";
 import { EngramError } from "../errors.js";
 
 export interface InstallArgs {
@@ -14,6 +14,8 @@ export interface InstallArgs {
   providers: string[]
   scope: string
   branch: string | undefined
+  /** Pin to an exact commit (e.g. from a manifest lockfile) instead of resolving the branch tip. */
+  sha?: string | undefined
 }
 
 export const run = (args: InstallArgs) =>
@@ -33,14 +35,14 @@ export const run = (args: InstallArgs) =>
     const scope = resolveScope(args.scope);
 
     yield* Console.log(`Resolving ${args.skillRef} from ${registry.url}...`);
-    const sha = yield* resolveRemoteSha(registry.url, branch);
+    const sha = args.sha ?? (yield* resolveRemoteSha(registry.url, branch));
 
     const repoSkillPath =
       registry.path === "." ? skillRelPath : `${registry.path.replace(/\/$/, "")}/${skillRelPath}`;
 
     const safeName = `${registryName}-${skillRelPath}`.replace(/\//g, "-");
     const tmpDir = path.join(os.tmpdir(), "engram", safeName);
-    yield* Console.log(`Fetching skill (sparse checkout)...`);
+    yield* Console.log(`Fetching skill (sparse checkout @ ${sha.slice(0, 12)})...`);
     yield* sparseCheckout(registry.url, repoSkillPath, sha, tmpDir);
 
     const skillSrc = path.join(tmpDir, repoSkillPath);
@@ -54,34 +56,29 @@ export const run = (args: InstallArgs) =>
       );
     }
 
+    // Materialize a single canonical copy in the store, then symlink it into each provider dir.
+    const canonical = path.join(storeDir(), safeName);
+    yield* Effect.tryPromise({
+      try: () => fs.rm(canonical, { recursive: true, force: true }),
+      catch: (e) => new EngramError({ message: String(e) }),
+    });
+    yield* copyDir(skillSrc, canonical);
+    yield* Effect.promise(() => fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {}));
+
     for (const provider of providers) {
       const dest =
         scope === "global"
           ? path.join(globalSkillsDir(provider), skillRelPath)
           : path.join(projectSkillsDir(provider, process.cwd()), skillRelPath);
 
-      const destExists = yield* Effect.tryPromise({
-        try: () => fs.access(dest).then(() => true).catch(() => false),
-        catch: (e) => new EngramError({ message: String(e) }),
-      });
-      if (destExists) {
-        yield* Console.log(`! ${provider} already exists at ${dest} — overwriting`);
-        yield* Effect.tryPromise({
-          try: () => fs.rm(dest, { recursive: true, force: true }),
-          catch: (e) => new EngramError({ message: String(e) }),
-        });
-      }
-
-      yield* copyDir(skillSrc, dest);
-      yield* Console.log(`✓ Installed for ${provider} at ${dest}`);
+      yield* linkSkill(canonical, dest);
+      yield* Console.log(`✓ Linked for ${provider} at ${dest}`);
     }
-
-    yield* Effect.promise(() => fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {}));
 
     if (scope === "project") {
       const cwd = process.cwd();
       const manifest = yield* loadManifest(cwd);
-      const skillEntry: import("../manifest.js").SkillEntry = { providers };
+      const skillEntry: import("../manifest.js").SkillEntry = { providers, sha };
       if (branch !== "main") skillEntry.branch = branch;
       manifest.skills[args.skillRef] = skillEntry;
       yield* saveManifest(cwd, manifest);

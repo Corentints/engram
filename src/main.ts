@@ -1,6 +1,9 @@
 #!/usr/bin/env tsx
 import { Args, Command, Options } from "@effect/cli";
-import { NodeContext, NodeRuntime } from "@effect/platform-node";
+// Import via subpaths so we don't pull @effect/platform-node's cluster barrel
+// (NodeClusterHttp/Socket → @effect/cluster, @effect/rpc, @effect/sql), which we don't use.
+import * as NodeContext from "@effect/platform-node/NodeContext";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { Console, Effect, Option } from "effect";
 import { EngramError } from "./errors.js";
 import * as RegistryCmd from "./commands/registry.js";

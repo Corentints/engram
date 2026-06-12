@@ -136,15 +136,17 @@ C'est la **divergence conceptuelle majeure**.
 
 Par ordre rapport impact/effort :
 
-| Priorité | Action | Pourquoi |
-|---|---|---|
-| 🟢 Quick win | **Persister le SHA résolu dans `engram.json`** (déjà calculé par `resolveRemoteSha`) | Vrai lockfile, reproductibilité au commit |
-| 🟢 Quick win | **Aligner sur `SKILL.md`** (accepter `SKILL.md` en plus de `<nom>.md`) | Interop directe avec l'écosystème skills.sh |
-| 🟢 Quick win | **Élaguer les dépendances inutilisées** (`cluster`, `sql`, `ioredis`, `lmdb`, …) | Poids `npx`, surface de maintenance |
-| 🟡 Moyen | **Ajouter des providers** (Cursor, Cline, Windsurf, Gemini CLI…) | Combler l'écart d'adoption, coût faible grâce à `ProviderDef` |
-| 🟡 Moyen | **Commande `update`/`check`** comparant SHA/hash local vs upstream | Mises à jour non-destructives |
-| 🟠 Structurant | **Store canonique + symlinks** (fallback `--copy`) | Source unique de vérité, mises à jour atomiques |
-| 🔵 Stratégique | **Découverte centralisée** (indexer plusieurs registries, voire un service) | Réponse à skills.sh ; les deps Effect serveur prennent alors leur sens |
+| Priorité | Action | Pourquoi | Statut |
+|---|---|---|---|
+| 🟢 Quick win | **Persister le SHA résolu dans `engram.json`** (déjà calculé par `resolveRemoteSha`) | Vrai lockfile, reproductibilité au commit | ✅ **Fait** — champ `sha`, `sync` réinstalle le commit pinné (fetch-par-SHA) |
+| 🟠 Structurant | **Store canonique + symlinks** (fallback copie) | Source unique de vérité, mises à jour atomiques | ✅ **Fait** — store `~/.local/share/engram/store/`, symlinks + fallback copie |
+| 🟢 Quick win | **Élaguer les dépendances inutilisées** | Poids `npx`, surface de maintenance | ✅ **Fait** — 7 deps retirées (`cluster`, `experimental`, `rpc`, `sql`, `workflow`, `ioredis`, `lmdb`) ; imports `@effect/platform-node` par sous-chemin pour éviter le barrel cluster |
+| 🟢 Quick win | **Aligner sur `SKILL.md`** (accepter `SKILL.md` en plus de `<nom>.md`) | Interop directe avec l'écosystème skills.sh | À faire |
+| 🟡 Moyen | **Ajouter des providers** (Cursor, Cline, Windsurf, Gemini CLI…) | Combler l'écart d'adoption, coût faible grâce à `ProviderDef` | À faire |
+| 🟡 Moyen | **Commande `update`/`check`** comparant SHA/hash local vs upstream | Mises à jour non-destructives | À faire |
+| 🔵 Stratégique | **Découverte centralisée** (indexer plusieurs registries, voire un service) | Réponse à skills.sh | À faire |
+
+> Note : `@effect/printer`, `@effect/printer-ansi` et `@effect/typeclass` sont **conservés** — ce sont des peer-deps réellement requises par `@effect/cli` pour le rendu de l'aide (et non du code mort).
 
 ### Positionnement différenciant suggéré
 engram peut se distinguer **non pas en imitant skills.sh**, mais en assumant un angle « **package manager rigoureux, privacy-first, orienté équipe/monorepo** » : registries privés first-class, lockfile à hash, zéro télémétrie, reproductibilité stricte via `engram.json` + `sync`. C'est précisément le terrain où le modèle de registry nommé et Effect-TS donnent un avantage, là où Vercel optimise pour le « zéro-config + annuaire public ».

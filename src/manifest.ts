@@ -7,6 +7,7 @@ export const MANIFEST_FILE = "engram.json";
 
 export interface SkillEntry {
   branch?: string
+  sha?: string
   providers?: string[]
 }
 
@@ -27,6 +28,8 @@ export const loadManifest = (dir: string): Effect.Effect<Manifest, EngramError> 
           const entry: SkillEntry = {};
           const branch = v["branch"];
           if (typeof branch === "string") entry.branch = branch;
+          const sha = v["sha"];
+          if (typeof sha === "string") entry.sha = sha;
           const providers = v["providers"];
           if (Array.isArray(providers)) entry.providers = providers as string[];
           skills[k] = entry;
@@ -49,6 +52,7 @@ export const saveManifest = (dir: string, manifest: Manifest): Effect.Effect<voi
       for (const [k, v] of Object.entries(manifest.skills)) {
         const entry: Record<string, unknown> = {};
         if (v.branch !== undefined) entry["branch"] = v.branch;
+        if (v.sha !== undefined) entry["sha"] = v.sha;
         if (v.providers !== undefined) entry["providers"] = v.providers;
         skillsOut[k] = entry;
       }

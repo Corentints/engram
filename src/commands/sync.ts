@@ -16,12 +16,13 @@ export const run = (dir: string | undefined) =>
     yield* Console.log(`Syncing ${String(entries.length)} skill(s)...`);
 
     for (const [skillRef, entry] of entries) {
-      yield* Console.log(`  ${skillRef}`);
+      yield* Console.log(`  ${skillRef}${entry.sha ? ` @ ${entry.sha.slice(0, 12)}` : ""}`);
       yield* installRun({
         skillRef,
         providers: entry.providers ?? [],
         scope: "project",
         branch: entry.branch,
+        sha: entry.sha,
       });
     }
 

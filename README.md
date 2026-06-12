@@ -67,19 +67,21 @@ engram install myorg/code-review --branch experimental
 | `--scope` | `global` | `global` or `project` |
 | `--branch` | `main` | Branch to fetch from |
 
-**Global** installs go to:
+Each skill is materialized once in a canonical store (`$XDG_DATA_HOME/engram/store/`, default `~/.local/share/engram/store/`) and **symlinked** into each provider directory — a single source of truth, with a copy fallback where symlinks aren't available.
+
+**Global** installs link into:
 - Claude → `~/.claude/skills/<skill>/`
 - Copilot → `~/.agents/skills/<skill>/`
 
-**Project** installs go to:
+**Project** installs link into:
 - Claude → `.claude/skills/<skill>/`
 - Copilot → `.github/skills/<skill>/`
 
-Project installs also write an entry to `engram.toml` so teammates can reproduce the install.
+Project installs also write an entry to `engram.json` — pinned to the exact commit SHA — so teammates can reproduce the install.
 
 ### `engram sync`
 
-Re-install all skills declared in `engram.toml` (always fetches the latest commit).
+Re-install all skills declared in `engram.json`, pinned to the exact commit SHA recorded in the manifest (reproducible installs).
 
 ```sh
 engram sync
@@ -126,15 +128,19 @@ When you install with `--scope project`, engram writes to `engram.json`:
 {
   "skills": {
     "myorg/code-review": {
+      "sha": "77208fa958572fbfe1b02d90ea1cacff0568cd8f",
       "providers": ["claude"]
     },
     "myorg/standup": {
       "branch": "experimental",
+      "sha": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
       "providers": ["claude", "copilot"]
     }
   }
 }
 ```
+
+The `sha` is recorded automatically on install and used by `engram sync` for reproducible, commit-pinned installs.
 
 Commit this file. Teammates run `engram sync` to get the same skills.
 
