@@ -95,9 +95,12 @@ async function findLeafDirs(baseDir: string, relPath = ""): Promise<string[]> {
 
 async function readLocalDescription(skillDir: string, skillRelPath: string): Promise<string | undefined> {
   const skillName = path.basename(skillRelPath);
-  const content = await fs.readFile(path.join(skillDir, `${skillName}.md`), "utf-8").catch(() => null);
+  // Prefer SKILL.md (spec-compliant), fall back to {skillName}.md for legacy repos
+  const content =
+    await fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8").catch(() => null) ??
+    await fs.readFile(path.join(skillDir, `${skillName}.md`), "utf-8").catch(() => null);
   if (!content) return undefined;
-  return extractFirstLine(content);
+  return extractDescription(content);
 }
 
 function readProjectSkillDescription(
@@ -116,8 +119,18 @@ function readProjectSkillDescription(
   });
 }
 
-function extractFirstLine(content: string): string | undefined {
+function extractDescription(content: string): string | undefined {
   const lines = content.split("\n");
+  // Parse `description:` from YAML frontmatter (spec-compliant)
+  if (lines[0]?.trim() === "---") {
+    let i = 1;
+    while (i < lines.length && lines[i]?.trim() !== "---") {
+      const match = lines[i]?.match(/^description:\s*(.+)/);
+      if (match) return match[1]?.trim();
+      i++;
+    }
+  }
+  // Fall back to first non-empty, non-header body line (legacy)
   let i = 0;
   if (lines[0]?.trim() === "---") {
     i = 1;
