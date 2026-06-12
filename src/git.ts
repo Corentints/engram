@@ -1,7 +1,15 @@
 import { Command, FileSystem } from "@effect/platform";
 import { Effect } from "effect";
+import * as fsp from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { EngramError } from "./errors.js";
+
+/** Canonical store: skills are materialized once here, then symlinked into each provider dir. */
+export function storeDir(): string {
+  const base = process.env["XDG_DATA_HOME"] ?? path.join(os.homedir(), ".local", "share");
+  return path.join(base, "engram", "store");
+}
 
 const git = (args: string[], cwd?: string) => {
   const base = Command.make("git", ...args);
@@ -30,10 +38,31 @@ export const sparseCheckout = (url: string, skillPath: string, sha: string, dest
     yield* fs.makeDirectory(destDir, { recursive: true }).pipe(
       Effect.mapError((e) => new EngramError({ message: `preparing dest dir: ${e.message}` }))
     );
-    yield* git(["clone", "--filter=blob:none", "--no-checkout", "--depth=1", "--single-branch", url, destDir]);
+    // Fetch the exact commit (works for pinned SHAs, not just branch tips), with a
+    // blobless partial clone so only the sparse skill path's blobs are downloaded.
+    yield* git(["init", "-q"], destDir);
+    yield* git(["remote", "add", "origin", url], destDir);
+    yield* git(["fetch", "--filter=blob:none", "--depth=1", "origin", sha], destDir);
     yield* git(["sparse-checkout", "init", "--cone"], destDir);
     yield* git(["sparse-checkout", "set", skillPath], destDir);
-    yield* git(["checkout", sha], destDir);
+    yield* git(["checkout", "--detach", "FETCH_HEAD"], destDir);
+  });
+
+/**
+ * Link a canonical skill copy into a provider directory. Prefers a symlink (single source
+ * of truth, cheap updates) and falls back to a deep copy where symlinks aren't available.
+ */
+export const linkSkill = (canonical: string, dest: string): Effect.Effect<void, EngramError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(path.dirname(dest), { recursive: true }).pipe(
+      Effect.mapError((e) => new EngramError({ message: `linking skill: ${e.message}` }))
+    );
+    yield* fs.remove(dest, { recursive: true }).pipe(Effect.ignore);
+    yield* Effect.tryPromise({
+      try: () => fsp.symlink(canonical, dest, "dir"),
+      catch: (e) => new EngramError({ message: String(e) }),
+    }).pipe(Effect.catchAll(() => copyDir(canonical, dest)));
   });
 
 export const copyDir = (src: string, dst: string): Effect.Effect<void, EngramError, FileSystem.FileSystem> =>

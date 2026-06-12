@@ -4,8 +4,8 @@ import { promisify } from "node:util";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadConfig } from "../config.js";
 import { EngramError } from "../errors.js";
+import { resolveUrl, skillId } from "../source.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,49 +14,31 @@ export interface RemoteSkill {
   description?: string
 }
 
-export const run = (query: string, registryFilter: string | undefined): Effect.Effect<void, EngramError> =>
+export interface RemoteListing {
+  /** Effective sub-directory the skills are relative to (`.` for repo root). */
+  basePath: string
+  skills: RemoteSkill[]
+}
+
+export const run = (source: string, query: string | undefined, subPath: string): Effect.Effect<void, EngramError> =>
   Effect.gen(function* () {
-    const config = yield* loadConfig();
-
-    if (Object.keys(config.registries).length === 0) {
-      return yield* Effect.fail(
-        new EngramError({ message: "no registries configured. Run `engram registry add` first." }),
-      );
+    const url = resolveUrl(source);
+    yield* Console.log(`Listing skills in ${source}...`);
+    const { skills } = yield* listRemoteSkills(url, subPath);
+    const matches = skills.filter(
+      (s) => !query || s.path.toLowerCase().includes(query.toLowerCase()),
+    );
+    if (matches.length === 0) {
+      yield* Console.log(`  No skills${query ? ` matching '${query}'` : ""} found.`);
+      return;
     }
-
-    const registries =
-      registryFilter !== undefined
-        ? (() => {
-            const entry = config.registries[registryFilter];
-            if (!entry) {
-              return Effect.fail(
-                new EngramError({ message: `registry '${registryFilter}' not found` }),
-              );
-            }
-            return Effect.succeed([[registryFilter, entry]] as [string, typeof entry][]);
-          })()
-        : Effect.succeed(Object.entries(config.registries));
-
-    const entries = yield* registries;
-
-    for (const [name, registry] of entries) {
-      yield* Console.log(`Registry: ${name}`);
-      const skills = yield* listRemoteSkills(registry.url, registry.path);
-      const matches = skills.filter(
-        (s) => query === "" || s.path.toLowerCase().includes(query.toLowerCase()),
-      );
-      if (matches.length === 0) {
-        yield* Console.log(`  No skills matching '${query}'`);
-      } else {
-        for (const skill of matches) {
-          const desc = skill.description !== undefined ? `  — ${skill.description}` : "";
-          yield* Console.log(`  ${name}/${skill.path}${desc}`);
-        }
-      }
+    for (const skill of matches) {
+      const desc = skill.description !== undefined ? `  — ${skill.description}` : "";
+      yield* Console.log(`  ${skillId(source, skill.path)}${desc}`);
     }
   });
 
-export function listRemoteSkills(url: string, registryPath: string): Effect.Effect<RemoteSkill[], EngramError> {
+export function listRemoteSkills(url: string, registryPath: string): Effect.Effect<RemoteListing, EngramError> {
   return Effect.gen(function* () {
     const tmp = path.join(os.tmpdir(), "engram-search");
 
@@ -77,14 +59,18 @@ export function listRemoteSkills(url: string, registryPath: string): Effect.Effe
     yield* git("clone", "--filter=blob:none", "--no-checkout", "--depth=1", url, tmp);
 
     const treeRef = registryPath === "." ? "HEAD" : `HEAD:${registryPath}`;
-    const absPrefix = registryPath === "." ? "" : `${registryPath}/`;
+    const absPrefix = registryPath === "." ? "" : `${registryPath.replace(/\/$/, "")}/`;
     const allFiles = (yield* git("ls-tree", "-r", "--name-only", treeRef)).split("\n").filter(Boolean);
     let skillPaths = extractSkillPaths(allFiles);
 
+    // When pointed at the repo root, auto-detect a single wrapping dir (e.g. `skills/`)
+    // so callers can reference skills relative to it.
+    let basePath = registryPath;
     let skillFilePrefix = "";
     if (registryPath === ".") {
       const root = detectSkillRoot(skillPaths);
       if (root) {
+        basePath = root;
         skillFilePrefix = root + "/";
         skillPaths = skillPaths.map((p) => p.slice(root.length + 1));
       }
@@ -112,7 +98,7 @@ export function listRemoteSkills(url: string, registryPath: string): Effect.Effe
       catch: () => new EngramError({ message: "cleanup failed" }),
     });
 
-    return skills;
+    return { basePath, skills };
   });
 }
 

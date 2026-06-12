@@ -1,7 +1,6 @@
 import { Console, Effect } from "effect";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { loadConfig, type RegistryEntry } from "../config.js";
 import { loadManifest } from "../manifest.js";
 import { ALL_PROVIDERS, globalSkillsDir, projectSkillsDir } from "../providers/index.js";
 import { EngramError } from "../errors.js";
@@ -26,23 +25,23 @@ export const run = (scopeFilter: string | undefined): Effect.Effect<void, Engram
 
     if (showProject) {
       const cwd = process.cwd();
-      const [manifest, config] = yield* Effect.all([loadManifest(cwd), loadConfig()]);
+      const manifest = yield* loadManifest(cwd);
       const entries = Object.entries(manifest.skills);
       if (entries.length > 0) {
         yield* Console.log("Project skills:");
-        for (const [key, entry] of entries) {
+        for (const [id, entry] of entries) {
           const providers = (entry.providers ?? []).join(", ");
           const branchHint = entry.branch ? ` (${entry.branch})` : "";
-          const description = yield* readProjectSkillDescription(cwd, key, config.registries, entry.providers ?? []);
+          const description = yield* readProjectSkillDescription(cwd, entry.skill, entry.providers ?? []);
           const desc = description !== undefined ? `  — ${description}` : "";
-          yield* Console.log(`  ${key}${branchHint}  [${providers}]${desc}`);
+          yield* Console.log(`  ${id}${branchHint}  [${providers}]${desc}`);
         }
         any = true;
       }
     }
 
     if (!any) {
-      yield* Console.log("No skills installed. Use `engram install registry/skill` to install one.");
+      yield* Console.log("No skills installed. Use `engram add owner/repo` to install one.");
     }
   });
 
@@ -103,34 +102,18 @@ async function readLocalDescription(skillDir: string, skillRelPath: string): Pro
 
 function readProjectSkillDescription(
   cwd: string,
-  skillRef: string,
-  registries: Record<string, RegistryEntry>,
+  skill: string,
   providers: string[],
 ): Effect.Effect<string | undefined> {
   return Effect.tryPromise({
     try: async () => {
-      const skillRelPath = resolveSkillRelPath(skillRef, registries);
-      if (!skillRelPath) return undefined;
       const firstProvider = providers[0];
       if (!firstProvider) return undefined;
-      const providerDir = firstProvider === "claude"
-        ? projectSkillsDir("claude", cwd)
-        : projectSkillsDir("copilot", cwd);
-      return readLocalDescription(path.join(providerDir, skillRelPath), skillRelPath);
+      const provider = firstProvider === "copilot" ? "copilot" : "claude";
+      return readLocalDescription(path.join(projectSkillsDir(provider, cwd), skill), skill);
     },
     catch: () => undefined as never,
   });
-}
-
-function resolveSkillRelPath(skillRef: string, registries: Record<string, RegistryEntry>): string | undefined {
-  const sortedNames = Object.keys(registries).sort((a, b) => b.length - a.length);
-  for (const name of sortedNames) {
-    if (skillRef.startsWith(name + "/")) {
-      const relPath = skillRef.slice(name.length + 1);
-      if (relPath) return relPath;
-    }
-  }
-  return undefined;
 }
 
 function extractFirstLine(content: string): string | undefined {

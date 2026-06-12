@@ -1,6 +1,7 @@
 import { Console, Effect } from "effect";
 import { loadManifest } from "../manifest.js";
-import { run as installRun } from "./install.js";
+import { parseProvider } from "../providers/index.js";
+import { installSkill } from "./install.js";
 
 export const run = (dir: string | undefined) =>
   Effect.gen(function* () {
@@ -15,13 +16,17 @@ export const run = (dir: string | undefined) =>
 
     yield* Console.log(`Syncing ${String(entries.length)} skill(s)...`);
 
-    for (const [skillRef, entry] of entries) {
-      yield* Console.log(`  ${skillRef}`);
-      yield* installRun({
-        skillRef,
-        providers: entry.providers ?? [],
+    for (const [id, entry] of entries) {
+      yield* Console.log(`  ${id}${entry.sha ? ` @ ${entry.sha.slice(0, 12)}` : ""}`);
+      const providers = yield* Effect.forEach(entry.providers ?? [], parseProvider);
+      yield* installSkill({
+        source: entry.source,
+        skill: entry.skill,
+        providers,
         scope: "project",
-        branch: entry.branch,
+        branch: entry.branch ?? "main",
+        path: entry.path ?? ".",
+        sha: entry.sha,
       });
     }
 

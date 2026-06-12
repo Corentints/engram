@@ -3,45 +3,38 @@ import { multiselect, isCancel } from "@clack/prompts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadConfig, type RegistryEntry } from "../config.js";
-import { loadManifest, saveManifest } from "../manifest.js";
+import { loadManifest, saveManifest, type SkillEntry } from "../manifest.js";
 import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir, type Provider } from "../providers/index.js";
-import { copyDir, resolveRemoteSha, sparseCheckout } from "../git.js";
+import { copyDir, linkSkill, resolveRemoteSha, sparseCheckout, storeDir } from "../git.js";
+import { resolveUrl, skillId, storeKey } from "../source.js";
 import { EngramError } from "../errors.js";
 
-export interface InstallArgs {
-  skillRef: string
-  providers: string[]
-  scope: string
-  branch: string | undefined
+export type Scope = "global" | "project";
+
+export interface InstallSkillOptions {
+  source: string
+  skill: string
+  providers: Provider[]
+  scope: Scope
+  branch: string
+  path: string
+  /** Pin to an exact commit instead of resolving the branch tip. */
+  sha?: string | undefined
 }
 
-export const run = (args: InstallArgs) =>
+/** Fetch a single skill from a source and link it into each provider directory. */
+export const installSkill = (opts: InstallSkillOptions) =>
   Effect.gen(function* () {
-    const branch = args.branch ?? "main";
-    const config = yield* loadConfig();
-    const [registryName, skillRelPath] = yield* parseSkillRef(args.skillRef, config.registries);
+    const url = resolveUrl(opts.source);
+    const sha = opts.sha ?? (yield* resolveRemoteSha(url, opts.branch));
 
-    const registry = config.registries[registryName];
-    if (!registry) {
-      return yield* Effect.fail(
-        new EngramError({ message: `registry '${registryName}' not configured. Run \`engram registry add\` first.` }),
-      );
-    }
+    const base = opts.path.replace(/\/$/, "");
+    const repoSkillPath = base === "." || base === "" ? opts.skill : `${base}/${opts.skill}`;
 
-    const providers = yield* resolveProviders(args.providers);
-    const scope = resolveScope(args.scope);
-
-    yield* Console.log(`Resolving ${args.skillRef} from ${registry.url}...`);
-    const sha = yield* resolveRemoteSha(registry.url, branch);
-
-    const repoSkillPath =
-      registry.path === "." ? skillRelPath : `${registry.path.replace(/\/$/, "")}/${skillRelPath}`;
-
-    const safeName = `${registryName}-${skillRelPath}`.replace(/\//g, "-");
+    const safeName = storeKey(opts.source, opts.skill);
     const tmpDir = path.join(os.tmpdir(), "engram", safeName);
-    yield* Console.log(`Fetching skill (sparse checkout)...`);
-    yield* sparseCheckout(registry.url, repoSkillPath, sha, tmpDir);
+    yield* Console.log(`Fetching ${skillId(opts.source, opts.skill)} @ ${sha.slice(0, 12)}...`);
+    yield* sparseCheckout(url, repoSkillPath, sha, tmpDir);
 
     const skillSrc = path.join(tmpDir, repoSkillPath);
     const exists = yield* Effect.tryPromise({
@@ -50,63 +43,62 @@ export const run = (args: InstallArgs) =>
     });
     if (!exists) {
       return yield* Effect.fail(
-        new EngramError({ message: `skill path '${repoSkillPath}' not found in repository` }),
+        new EngramError({ message: `skill path '${repoSkillPath}' not found in ${opts.source}` }),
       );
     }
 
-    for (const provider of providers) {
-      const dest =
-        scope === "global"
-          ? path.join(globalSkillsDir(provider), skillRelPath)
-          : path.join(projectSkillsDir(provider, process.cwd()), skillRelPath);
-
-      const destExists = yield* Effect.tryPromise({
-        try: () => fs.access(dest).then(() => true).catch(() => false),
-        catch: (e) => new EngramError({ message: String(e) }),
-      });
-      if (destExists) {
-        yield* Console.log(`! ${provider} already exists at ${dest} — overwriting`);
-        yield* Effect.tryPromise({
-          try: () => fs.rm(dest, { recursive: true, force: true }),
-          catch: (e) => new EngramError({ message: String(e) }),
-        });
-      }
-
-      yield* copyDir(skillSrc, dest);
-      yield* Console.log(`✓ Installed for ${provider} at ${dest}`);
-    }
-
+    // Materialize a single canonical copy, then symlink it into each provider dir.
+    const canonical = path.join(storeDir(), safeName);
+    yield* Effect.tryPromise({
+      try: () => fs.rm(canonical, { recursive: true, force: true }),
+      catch: (e) => new EngramError({ message: String(e) }),
+    });
+    yield* copyDir(skillSrc, canonical);
     yield* Effect.promise(() => fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {}));
 
-    if (scope === "project") {
+    for (const provider of opts.providers) {
+      const dest =
+        opts.scope === "global"
+          ? path.join(globalSkillsDir(provider), opts.skill)
+          : path.join(projectSkillsDir(provider, process.cwd()), opts.skill);
+
+      yield* linkSkill(canonical, dest);
+      yield* Console.log(`✓ Linked for ${provider} at ${dest}`);
+    }
+
+    if (opts.scope === "project") {
       const cwd = process.cwd();
       const manifest = yield* loadManifest(cwd);
-      const skillEntry: import("../manifest.js").SkillEntry = { providers };
-      if (branch !== "main") skillEntry.branch = branch;
-      manifest.skills[args.skillRef] = skillEntry;
+      const entry: SkillEntry = { source: opts.source, skill: opts.skill, sha, providers: opts.providers };
+      if (opts.branch !== "main") entry.branch = opts.branch;
+      if (base !== "." && base !== "") entry.path = base;
+      manifest.skills[skillId(opts.source, opts.skill)] = entry;
       yield* saveManifest(cwd, manifest);
     }
   });
 
-export function parseSkillRef(
-  skillRef: string,
-  registries: Record<string, RegistryEntry>,
-): Effect.Effect<[string, string], EngramError> {
-  const sortedNames = Object.keys(registries).sort((a, b) => b.length - a.length);
-  for (const name of sortedNames) {
-    if (skillRef.startsWith(name + "/")) {
-      const skillRelPath = skillRef.slice(name.length + 1);
-      if (skillRelPath) return Effect.succeed([name, skillRelPath]);
-    }
-  }
-  return Effect.fail(
-    new EngramError({
-      message: `unknown registry in '${skillRef}' — run \`engram registry add\` first`,
-    }),
-  );
+export interface InstallManyOptions {
+  source: string
+  skills: string[]
+  providers: Provider[]
+  scope: Scope
+  branch: string
+  path: string
 }
 
-function resolveProviders(raw: string[]): Effect.Effect<Provider[], EngramError> {
+/** Install several skills from one source, resolving the commit once for a consistent snapshot. */
+export const installSkills = (opts: InstallManyOptions) =>
+  Effect.gen(function* () {
+    const url = resolveUrl(opts.source);
+    const sha = yield* resolveRemoteSha(url, opts.branch);
+    for (const skill of opts.skills) {
+      yield* installSkill({ ...opts, skill, sha });
+    }
+  });
+
+export const resolveScope = (scope: string): Scope => (scope === "project" ? "project" : "global");
+
+export function resolveProviders(raw: string[]): Effect.Effect<Provider[], EngramError> {
   if (raw.length > 0) {
     return Effect.forEach(raw, parseProvider);
   }
@@ -124,6 +116,26 @@ function resolveProviders(raw: string[]): Effect.Effect<Provider[], EngramError>
   });
 }
 
-function resolveScope(scope: string): "global" | "project" {
-  return scope === "project" ? "project" : "global";
-}
+export const parseProviderList = (raw: string): string[] =>
+  raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+
+/** CLI entry for `engram install <source> <skill>`: a direct, non-interactive single install. */
+export const runInstall = (
+  source: string,
+  skill: string,
+  providerRaw: string,
+  scope: string,
+  branch: string | undefined,
+  subPath: string,
+) =>
+  Effect.gen(function* () {
+    const providers = yield* resolveProviders(parseProviderList(providerRaw));
+    yield* installSkill({
+      source,
+      skill,
+      providers,
+      scope: resolveScope(scope),
+      branch: branch ?? "main",
+      path: subPath,
+    });
+  });
