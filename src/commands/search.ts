@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { EngramError } from "../errors.js";
 import { resolveUrl, skillId } from "../source.js";
+import { extractDescription } from "../skill.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -131,28 +132,3 @@ function extractSkillPaths(files: string[]): string[] {
 }
 
 
-function extractDescription(content: string): string | undefined {
-  const lines = content.split("\n");
-  // Parse `description:` from YAML frontmatter (spec-compliant)
-  if (lines[0]?.trim() === "---") {
-    let i = 1;
-    while (i < lines.length && lines[i]?.trim() !== "---") {
-      const match = lines[i]?.match(/^description:\s*(.+)/);
-      if (match) return match[1]?.trim();
-      i++;
-    }
-  }
-  // Fall back to first non-empty, non-header body line (legacy)
-  let i = 0;
-  if (lines[0]?.trim() === "---") {
-    i = 1;
-    while (i < lines.length && lines[i]?.trim() !== "---") i++;
-    i++;
-  }
-  while (i < lines.length) {
-    const trimmed = lines[i]?.trim() ?? "";
-    if (trimmed && !trimmed.startsWith("#")) return trimmed;
-    i++;
-  }
-  return undefined;
-}
