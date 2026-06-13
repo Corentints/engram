@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { EngramError } from "./errors.js";
 
-export const MANIFEST_FILE = "engram.json";
+export const MANIFEST_FILE = "skills.json";
 
 export interface SkillEntry {
   /** Git source the skill comes from: `owner/repo` shorthand or a full git URL. */
