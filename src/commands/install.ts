@@ -8,6 +8,7 @@ import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir, type P
 import { copyDir, linkSkill, resolveRemoteSha, sparseCheckout, storeDir } from "../git.js";
 import { resolveUrl, skillId, storeKey } from "../source.js";
 import { EngramError } from "../errors.js";
+import { resolveDefaultBranch } from "../git.js";
 
 export type Scope = "global" | "project";
 
@@ -128,12 +129,13 @@ export const runInstall = (
 ) =>
   Effect.gen(function* () {
     const providers = yield* resolveProviders(splitCsv(providerRaw));
+    const url = resolveUrl(source);
     yield* installSkill({
       source,
       skill,
       providers,
       scope: resolveScope(scope),
-      branch: branch ?? "main",
+      branch: branch ?? (yield* resolveDefaultBranch(url)),
       path: subPath,
     });
   });

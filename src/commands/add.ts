@@ -3,6 +3,7 @@ import { groupMultiselect, multiselect, isCancel } from "@clack/prompts";
 import { styleText } from "node:util";
 import { resolveUrl } from "../source.js";
 import { EngramError } from "../errors.js";
+import { resolveDefaultBranch } from "../git.js";
 import { listRemoteSkills, type RemoteSkill } from "./search.js";
 import { installSkills, splitCsv, resolveProviders, resolveScope } from "./install.js";
 
@@ -21,7 +22,7 @@ export interface AddArgs {
 export const run = (args: AddArgs) =>
   Effect.gen(function* () {
     const url = resolveUrl(args.source);
-    const branch = args.branch ?? "main";
+    const branch = args.branch ?? (yield* resolveDefaultBranch(url));
 
     yield* Console.log(`Fetching available skills from ${args.source}...`);
     const { basePath, skills } = yield* listRemoteSkills(url, args.path);

@@ -126,7 +126,7 @@ export function listRemoteSkills(
 }
 
 
-function detectSkillRoot(skillPaths: string[]): string | undefined {
+export function detectSkillRoot(skillPaths: string[]): string | undefined {
   if (skillPaths.length === 0) return undefined;
   const first = skillPaths[0];
   if (!first) return undefined;
@@ -137,17 +137,24 @@ function detectSkillRoot(skillPaths: string[]): string | undefined {
   return undefined;
 }
 
-function extractSkillPaths(files: string[]): string[] {
-  const parentDirs = new Set<string>();
+export function extractSkillPaths(files: string[]): string[] {
+  // A skill is a directory that contains a SKILL.md (spec) or a markdown file
+  // named after the directory itself (legacy format shown in the README).
+  const skillDirs = new Set<string>();
   for (const file of files) {
-    const lastSlash = file.lastIndexOf("/");
-    if (lastSlash > 0) {
-      parentDirs.add(file.slice(0, lastSlash));
+    if (!file.endsWith(".md")) continue;
+    const slash = file.lastIndexOf("/");
+    if (slash <= 0) continue;
+    const dir = file.slice(0, slash);
+    const dirName = dir.slice(dir.lastIndexOf("/") + 1);
+    const mdName = file.slice(slash + 1, file.length - 3);
+    if (mdName === "SKILL" || mdName.toLowerCase() === dirName.toLowerCase()) {
+      skillDirs.add(dir);
     }
   }
-  const sorted = [...parentDirs].sort();
-  // Keep only leaf directories (not ancestors of deeper skill dirs)
-  return sorted.filter((dir) => !sorted.some((other) => other !== dir && other.startsWith(dir + "/")));
+  const sorted = [...skillDirs].sort();
+  // Keep only top-level skill directories, not nested dirs inside another skill.
+  return sorted.filter((dir) => !sorted.some((other) => other !== dir && dir.startsWith(other + "/")));
 }
 
 

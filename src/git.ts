@@ -31,6 +31,20 @@ export const resolveRemoteSha = (url: string, branch: string) =>
     return sha;
   });
 
+export const resolveDefaultBranch = (url: string) =>
+  Effect.gen(function* () {
+    const stdout = yield* git(["ls-remote", "--symref", url, "HEAD"]);
+    // Output: "ref: refs/heads/main\tHEAD\n<sha>\tHEAD"
+    const match = stdout.match(/ref:\s+refs\/heads\/([^\s]+)/);
+    const branch = match?.[1];
+    if (!branch) {
+      return yield* Effect.fail(
+        new EngramError({ message: `could not determine default branch for ${url}` }),
+      );
+    }
+    return branch;
+  });
+
 export const sparseCheckout = (url: string, skillPath: string, sha: string, destDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
