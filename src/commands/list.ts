@@ -116,10 +116,7 @@ function readProjectSkillDescription(
     const provider = yield* parseProvider(firstProvider).pipe(Effect.option);
     if (Option.isNone(provider)) return undefined;
     const dir = projectSkillsDir(provider.value, cwd);
-    return yield* Effect.tryPromise({
-      try: () => readLocalDescription(path.join(dir, skill), skill),
-      catch: () => undefined,
-    }).pipe(Effect.orElseSucceed(() => undefined));
+    return yield* Effect.promise(() => readLocalDescription(path.join(dir, skill), skill));
   });
 }
 
