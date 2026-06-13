@@ -37,12 +37,13 @@ Lists the skills it finds, then installs your selection.
 engram add owner/repo                       # interactive picker
 engram add owner/repo --skill code-review   # one skill
 engram add owner/repo --skill a,b           # several
-engram add owner/repo --skill '*'           # all skills
+engram add owner/repo --all                 # all skills
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--skill` | prompted | Comma-separated skill paths, or `*` for all |
+| `--skill` | prompted | Comma-separated skill paths |
+| `--all` | off | Install every skill in the source |
 | `--provider` | prompted | Comma-separated: `claude`, `copilot` |
 | `--scope` | `global` | `global` or `project` |
 | `--branch` | `main` | Branch to fetch from |

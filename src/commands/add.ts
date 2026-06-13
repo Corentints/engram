@@ -8,8 +8,10 @@ import { installSkills, splitCsv, resolveProviders, resolveScope } from "./insta
 
 export interface AddArgs {
   source: string
-  /** Comma-separated skills, or `*` for all. Empty → interactive selection. */
+  /** Comma-separated skills. Empty → interactive selection (unless `all`). */
   skill: string
+  /** Install every skill in the source. */
+  all: boolean
   providers: string[]
   scope: string
   branch: string | undefined
@@ -29,7 +31,7 @@ export const run = (args: AddArgs) =>
       return;
     }
 
-    const selectedSkills = yield* selectSkills(args.skill, skills);
+    const selectedSkills = yield* selectSkills(args.skill, args.all, skills);
     if (selectedSkills.length === 0) {
       yield* Console.log("No skills selected.");
       return;
@@ -47,10 +49,11 @@ export const run = (args: AddArgs) =>
     });
   });
 
-function selectSkills(skillArg: string, skills: RemoteSkill[]): Effect.Effect<string[], EngramError> {
+function selectSkills(skillArg: string, all: boolean, skills: RemoteSkill[]): Effect.Effect<string[], EngramError> {
+  if (all) return Effect.succeed(skills.map((s) => s.path));
+
   const requested = splitCsv(skillArg);
   if (requested.length > 0) {
-    if (requested.includes("*")) return Effect.succeed(skills.map((s) => s.path));
     const available = new Set(skills.map((s) => s.path));
     const unknown = requested.filter((r) => !available.has(r));
     if (unknown.length > 0) {
