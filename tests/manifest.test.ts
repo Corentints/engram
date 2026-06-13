@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadManifest, saveManifest, MANIFEST_FILE } from "../manifest.js";
+import { loadManifest, saveManifest, MANIFEST_FILE } from "../src/manifest.js";
 
 let tmp: string;
 

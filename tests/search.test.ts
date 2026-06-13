@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectSkillRoot, extractSkillPaths } from "../commands/search.js";
+import { detectSkillRoot, extractSkillPaths } from "../src/commands/search.js";
 
 describe("extractSkillPaths", () => {
   it("returns directories that contain a SKILL.md", () => {
