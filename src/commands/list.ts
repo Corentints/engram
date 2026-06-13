@@ -1,8 +1,8 @@
-import { Console, Effect } from "effect";
+import { Console, Effect, Option } from "effect";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { loadManifest } from "../manifest.js";
-import { ALL_PROVIDERS, globalSkillsDir, projectSkillsDir } from "../providers/index.js";
+import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir } from "../providers/index.js";
 import { EngramError } from "../errors.js";
 import { extractDescription } from "../skill.js";
 
@@ -109,14 +109,17 @@ function readProjectSkillDescription(
   skill: string,
   providers: string[],
 ): Effect.Effect<string | undefined> {
-  return Effect.tryPromise({
-    try: async () => {
-      const firstProvider = providers[0];
-      if (!firstProvider) return undefined;
-      const provider = firstProvider === "copilot" ? "copilot" : "claude";
-      return readLocalDescription(path.join(projectSkillsDir(provider, cwd), skill), skill);
-    },
-    catch: () => undefined as never,
+  return Effect.gen(function* () {
+    const firstProvider = providers[0];
+    if (firstProvider === undefined) return undefined;
+    // Resolve against the provider registry rather than hard-coding known ids.
+    const provider = yield* parseProvider(firstProvider).pipe(Effect.option);
+    if (Option.isNone(provider)) return undefined;
+    const dir = projectSkillsDir(provider.value, cwd);
+    return yield* Effect.tryPromise({
+      try: () => readLocalDescription(path.join(dir, skill), skill),
+      catch: () => undefined,
+    }).pipe(Effect.orElseSucceed(() => undefined));
   });
 }
 

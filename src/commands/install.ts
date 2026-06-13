@@ -116,7 +116,8 @@ export function resolveProviders(raw: string[]): Effect.Effect<Provider[], Engra
   });
 }
 
-export const parseProviderList = (raw: string): string[] =>
+/** Split a comma-separated CLI argument (providers, skills, …) into trimmed, non-empty items. */
+export const splitCsv = (raw: string): string[] =>
   raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
 /** CLI entry for `engram install <source> <skill>`: a direct, non-interactive single install. */
@@ -129,7 +130,7 @@ export const runInstall = (
   subPath: string,
 ) =>
   Effect.gen(function* () {
-    const providers = yield* resolveProviders(parseProviderList(providerRaw));
+    const providers = yield* resolveProviders(splitCsv(providerRaw));
     yield* installSkill({
       source,
       skill,

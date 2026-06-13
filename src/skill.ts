@@ -11,8 +11,8 @@ export function extractDescription(content: string): string | undefined {
   if (hasFrontmatter) {
     let i = 1;
     while (i < lines.length && lines[i]?.trim() !== "---") {
-      const match = lines[i]?.match(/^description:\s*(.+)/);
-      if (match) return match[1]!.trim();
+      const description = lines[i]?.match(/^description:\s*(.+)/)?.[1];
+      if (description !== undefined) return description.trim();
       i++;
     }
     // No `description:` in frontmatter — scan body after closing `---`
