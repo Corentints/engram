@@ -1,19 +1,22 @@
 import { Console, Effect, Option } from "effect";
-import * as fs from "node:fs/promises";
+import { FileSystem } from "@effect/platform";
 import * as path from "node:path";
 import { loadManifest } from "../manifest.js";
 import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir } from "../providers/index.js";
 import { EngramError } from "../errors.js";
 import { extractDescription } from "../skill.js";
 
-export const run = (scopeFilter: string | undefined): Effect.Effect<void, EngramError> =>
+export const run = (
+  scopeFilter: string | undefined,
+): Effect.Effect<void, EngramError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     const showGlobal = scopeFilter === undefined || scopeFilter === "global";
     const showProject = scopeFilter === undefined || scopeFilter === "project";
     let any = false;
 
     if (showGlobal) {
-      const globalSkills = yield* listGlobalSkills();
+      const globalSkills = yield* listGlobalSkills(fs);
       if (globalSkills.length > 0) {
         yield* Console.log("Global skills:");
         for (const { name, providers, description } of globalSkills) {
@@ -33,7 +36,7 @@ export const run = (scopeFilter: string | undefined): Effect.Effect<void, Engram
         for (const [id, entry] of entries) {
           const providers = (entry.providers ?? []).join(", ");
           const branchHint = entry.branch ? ` (${entry.branch})` : "";
-          const description = yield* readProjectSkillDescription(cwd, entry.skill, entry.providers ?? []);
+          const description = yield* readProjectSkillDescription(fs, cwd, entry.skill, entry.providers ?? []);
           const desc = description !== undefined ? `  — ${description}` : "";
           yield* Console.log(`  ${id}${branchHint}  [${providers}]${desc}`);
         }
@@ -52,59 +55,75 @@ interface SkillListing {
   description?: string
 }
 
-function listGlobalSkills(): Effect.Effect<SkillListing[], EngramError> {
-  return Effect.tryPromise({
-    try: async () => {
-      const map = new Map<string, { providers: string[]; description?: string }>();
-      for (const provider of ALL_PROVIDERS) {
-        const dir = globalSkillsDir(provider);
-        const leaves = await findLeafDirs(dir);
-        for (const relPath of leaves) {
-          const entry = map.get(relPath) ?? { providers: [] };
-          entry.providers.push(provider);
-          if (entry.description === undefined) {
-            const desc = await readLocalDescription(path.join(dir, relPath), relPath);
-            if (desc !== undefined) entry.description = desc;
-          }
-          map.set(relPath, entry);
+function listGlobalSkills(fs: FileSystem.FileSystem): Effect.Effect<SkillListing[]> {
+  return Effect.gen(function* () {
+    const map = new Map<string, { providers: string[]; description?: string }>();
+    for (const provider of ALL_PROVIDERS) {
+      const dir = globalSkillsDir(provider);
+      const leaves = yield* findLeafDirs(fs, dir);
+      for (const relPath of leaves) {
+        const entry = map.get(relPath) ?? { providers: [] };
+        entry.providers.push(provider);
+        if (entry.description === undefined) {
+          const desc = yield* readLocalDescription(fs, path.join(dir, relPath), relPath);
+          if (desc !== undefined) entry.description = desc;
         }
+        map.set(relPath, entry);
       }
-      return Array.from(map.entries()).map(([name, { providers, description }]): SkillListing => {
-        const listing: SkillListing = { name, providers };
-        if (description !== undefined) listing.description = description;
-        return listing;
-      });
-    },
-    catch: (e) => new EngramError({ message: String(e) }),
+    }
+    return Array.from(map.entries()).map(([name, { providers, description }]): SkillListing => {
+      const listing: SkillListing = { name, providers };
+      if (description !== undefined) listing.description = description;
+      return listing;
+    });
   });
 }
 
-async function findLeafDirs(baseDir: string, relPath = ""): Promise<string[]> {
-  const fullPath = relPath ? path.join(baseDir, relPath) : baseDir;
-  const entries = await fs.readdir(fullPath, { withFileTypes: true }).catch(() => null);
-  if (!entries) return [];
-  const hasFiles = entries.some((e) => !e.isDirectory());
-  if (hasFiles) return relPath ? [relPath] : [];
-  const results: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
-    results.push(...(await findLeafDirs(baseDir, childRel)));
-  }
-  return results;
+/**
+ * Walk `baseDir` and return the relative paths of its leaf skill directories — a leaf being a
+ * directory that holds files. Symlinks are followed (`fs.stat`), since installed skills are
+ * symlinks into the canonical store. Unreadable paths are treated as empty.
+ */
+function findLeafDirs(
+  fs: FileSystem.FileSystem,
+  baseDir: string,
+  relPath = "",
+): Effect.Effect<string[]> {
+  return Effect.gen(function* () {
+    const fullPath = relPath ? path.join(baseDir, relPath) : baseDir;
+    const names = yield* fs.readDirectory(fullPath).pipe(Effect.orElseSucceed(() => []));
+    const entries = yield* Effect.forEach(names, (name) =>
+      fs.stat(path.join(fullPath, name)).pipe(
+        Effect.map((info) => ({ name, isDir: info.type === "Directory" })),
+        Effect.orElseSucceed(() => ({ name, isDir: false })),
+      ),
+    );
+    if (entries.some((e) => !e.isDir)) return relPath ? [relPath] : [];
+    const nested = yield* Effect.forEach(
+      entries.filter((e) => e.isDir),
+      (e) => findLeafDirs(fs, baseDir, relPath ? `${relPath}/${e.name}` : e.name),
+    );
+    return nested.flat();
+  });
 }
 
-async function readLocalDescription(skillDir: string, skillRelPath: string): Promise<string | undefined> {
-  const skillName = path.basename(skillRelPath);
-  // Prefer SKILL.md (spec-compliant), fall back to {skillName}.md for legacy repos
-  const content =
-    await fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8").catch(() => null) ??
-    await fs.readFile(path.join(skillDir, `${skillName}.md`), "utf-8").catch(() => null);
-  if (!content) return undefined;
-  return extractDescription(content);
+function readLocalDescription(
+  fs: FileSystem.FileSystem,
+  skillDir: string,
+  skillRelPath: string,
+): Effect.Effect<string | undefined> {
+  return Effect.gen(function* () {
+    const skillName = path.basename(skillRelPath);
+    const readMaybe = (file: string) =>
+      fs.readFileString(path.join(skillDir, file)).pipe(Effect.orElseSucceed(() => undefined));
+    // Prefer SKILL.md (spec-compliant), fall back to {skillName}.md for legacy repos
+    const content = (yield* readMaybe("SKILL.md")) ?? (yield* readMaybe(`${skillName}.md`));
+    return content !== undefined ? extractDescription(content) : undefined;
+  });
 }
 
 function readProjectSkillDescription(
+  fs: FileSystem.FileSystem,
   cwd: string,
   skill: string,
   providers: string[],
@@ -116,7 +135,7 @@ function readProjectSkillDescription(
     const provider = yield* parseProvider(firstProvider).pipe(Effect.option);
     if (Option.isNone(provider)) return undefined;
     const dir = projectSkillsDir(provider.value, cwd);
-    return yield* Effect.promise(() => readLocalDescription(path.join(dir, skill), skill));
+    return yield* readLocalDescription(fs, path.join(dir, skill), skill);
   });
 }
 
