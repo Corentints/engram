@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { EngramError } from "../errors.js";
 import { resolveUrl, skillId } from "../source.js";
+import { extractDescription } from "../skill.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -80,11 +81,14 @@ export function listRemoteSkills(url: string, registryPath: string): Effect.Effe
       skillPaths,
       (skillPath) => {
         const dir = `${skillFilePrefix}${skillPath}/`;
-        const relMdFile = allFiles.find((f) => f.startsWith(dir) && f.endsWith(".md"));
+        // Prefer SKILL.md (spec-compliant), fall back to any .md for legacy repos
+        const relMdFile =
+          allFiles.find((f) => f === `${dir}SKILL.md`) ??
+          allFiles.find((f) => f.startsWith(dir) && f.endsWith(".md"));
         if (!relMdFile) return Effect.succeed({ path: skillPath });
         return git("show", `HEAD:${absPrefix}${relMdFile}`).pipe(
           Effect.map((stdout) => {
-            const description = extractFirstLine(stdout);
+            const description = extractDescription(stdout);
             return description !== undefined ? { path: skillPath, description } : { path: skillPath };
           }),
           Effect.orElse(() => Effect.succeed({ path: skillPath })),
@@ -128,18 +132,3 @@ function extractSkillPaths(files: string[]): string[] {
 }
 
 
-function extractFirstLine(content: string): string | undefined {
-  const lines = content.split("\n");
-  let i = 0;
-  if (lines[0]?.trim() === "---") {
-    i = 1;
-    while (i < lines.length && lines[i]?.trim() !== "---") i++;
-    i++;
-  }
-  while (i < lines.length) {
-    const trimmed = lines[i]?.trim() ?? "";
-    if (trimmed && !trimmed.startsWith("#")) return trimmed;
-    i++;
-  }
-  return undefined;
-}

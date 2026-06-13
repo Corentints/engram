@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { loadManifest } from "../manifest.js";
 import { ALL_PROVIDERS, globalSkillsDir, projectSkillsDir } from "../providers/index.js";
 import { EngramError } from "../errors.js";
+import { extractDescription } from "../skill.js";
 
 export const run = (scopeFilter: string | undefined): Effect.Effect<void, EngramError> =>
   Effect.gen(function* () {
@@ -95,9 +96,12 @@ async function findLeafDirs(baseDir: string, relPath = ""): Promise<string[]> {
 
 async function readLocalDescription(skillDir: string, skillRelPath: string): Promise<string | undefined> {
   const skillName = path.basename(skillRelPath);
-  const content = await fs.readFile(path.join(skillDir, `${skillName}.md`), "utf-8").catch(() => null);
+  // Prefer SKILL.md (spec-compliant), fall back to {skillName}.md for legacy repos
+  const content =
+    await fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8").catch(() => null) ??
+    await fs.readFile(path.join(skillDir, `${skillName}.md`), "utf-8").catch(() => null);
   if (!content) return undefined;
-  return extractFirstLine(content);
+  return extractDescription(content);
 }
 
 function readProjectSkillDescription(
@@ -116,18 +120,3 @@ function readProjectSkillDescription(
   });
 }
 
-function extractFirstLine(content: string): string | undefined {
-  const lines = content.split("\n");
-  let i = 0;
-  if (lines[0]?.trim() === "---") {
-    i = 1;
-    while (i < lines.length && lines[i]?.trim() !== "---") i++;
-    i++;
-  }
-  while (i < lines.length) {
-    const trimmed = lines[i]?.trim() ?? "";
-    if (trimmed && !trimmed.startsWith("#")) return trimmed;
-    i++;
-  }
-  return undefined;
-}
