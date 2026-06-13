@@ -10,7 +10,7 @@ export const run = (dir: string | undefined) =>
     const entries = Object.entries(manifest.skills);
 
     if (entries.length === 0) {
-      yield* Console.log("No skills declared in engram.json.");
+      yield* Console.log("No skills declared in skills.json.");
       return;
     }
 

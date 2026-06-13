@@ -21,16 +21,18 @@ const addCmd = Command.make(
   {
     source: Args.text({ name: "owner/repo" }),
     skill: Options.withDefault(Options.text("skill"), ""),
+    all: Options.boolean("all"),
     provider: Options.withDefault(Options.text("provider"), ""),
     scope: Options.withDefault(Options.text("scope"), "global"),
     branch: Options.optional(Options.text("branch")),
     path: Options.withDefault(Options.text("path"), "."),
   },
-  ({ source, skill, provider, scope, branch, path }) =>
+  ({ source, skill, all, provider, scope, branch, path }) =>
     wrap(
       AddCmd.run({
         source,
         skill,
+        all,
         providers: InstallCmd.splitCsv(provider),
         scope,
         branch: Option.getOrUndefined(branch),
