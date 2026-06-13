@@ -1,15 +1,63 @@
 import { Console, Effect, Option } from "effect";
 import { FileSystem } from "@effect/platform";
 import * as path from "node:path";
-import { loadManifest } from "../manifest.js";
+import { styleText } from "node:util";
+import { confirm, groupMultiselect, isCancel, multiselect } from "@clack/prompts";
+import { loadManifest, type SkillEntry } from "../manifest.js";
 import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir } from "../providers/index.js";
 import { EngramError } from "../errors.js";
 import { extractDescription } from "../skill.js";
+import * as RemoveCmd from "./remove.js";
 
 export const run = (
   scopeFilter: string | undefined,
 ): Effect.Effect<void, EngramError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
+    if (!isInteractive()) {
+      yield* runReadOnly(scopeFilter);
+      return;
+    }
+
+    const fs = yield* FileSystem.FileSystem;
+    const globalSkills = scopeFilter === undefined || scopeFilter === "global"
+      ? yield* listGlobalSkills(fs)
+      : [];
+    const projectEntries = scopeFilter === undefined || scopeFilter === "project"
+      ? yield* listProjectSkills()
+      : [];
+
+    const options = buildOptions(globalSkills, projectEntries);
+    if (options.length === 0) {
+      yield* Console.log("No skills installed. Use `engram add owner/repo` to install one.");
+      return;
+    }
+
+    const selected = yield* selectSkills(options);
+    if (selected.length === 0) {
+      yield* Console.log("No skills selected.");
+      return;
+    }
+
+    const shouldRemove = yield* confirmRemoval(selected.length);
+    if (!shouldRemove) {
+      yield* Console.log("Cancelled.");
+      return;
+    }
+
+    yield* Effect.forEach(selected, (value) => removeSkill(value), { discard: true });
+    yield* Console.log(`✓ Removed ${String(selected.length)} skill(s).`);
+  });
+
+function isInteractive(): boolean {
+  return typeof process.stdin.isTTY === "boolean" && process.stdin.isTTY;
+}
+
+// ── read-only listing (non-TTY fallback) ──────────────────────────────────────
+
+function runReadOnly(
+  scopeFilter: string | undefined,
+): Effect.Effect<void, EngramError, FileSystem.FileSystem> {
+  return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const showGlobal = scopeFilter === undefined || scopeFilter === "global";
     const showProject = scopeFilter === undefined || scopeFilter === "project";
@@ -29,8 +77,7 @@ export const run = (
 
     if (showProject) {
       const cwd = process.cwd();
-      const manifest = yield* loadManifest(cwd);
-      const entries = Object.entries(manifest.skills);
+      const entries = yield* listProjectSkills();
       if (entries.length > 0) {
         yield* Console.log("Project skills:");
         for (const [id, entry] of entries) {
@@ -48,6 +95,9 @@ export const run = (
       yield* Console.log("No skills installed. Use `engram add owner/repo` to install one.");
     }
   });
+}
+
+// ── skill discovery ───────────────────────────────────────────────────────────
 
 interface SkillListing {
   name: string
@@ -76,6 +126,14 @@ function listGlobalSkills(fs: FileSystem.FileSystem): Effect.Effect<SkillListing
       if (description !== undefined) listing.description = description;
       return listing;
     });
+  });
+}
+
+function listProjectSkills() {
+  return Effect.gen(function* () {
+    const cwd = process.cwd();
+    const manifest = yield* loadManifest(cwd);
+    return Object.entries(manifest.skills);
   });
 }
 
@@ -139,3 +197,111 @@ function readProjectSkillDescription(
   });
 }
 
+// ── interactive selection ─────────────────────────────────────────────────────
+
+interface SelectableOption {
+  value: string
+  label: string
+  hint?: string
+  group: "Global" | "Project"
+}
+
+function truncate(text: string, max = 55): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function buildOptions(
+  globalSkills: SkillListing[],
+  projectEntries: Array<[string, SkillEntry]>,
+): SelectableOption[] {
+  const options: SelectableOption[] = [];
+
+  for (const skill of globalSkills) {
+    options.push({
+      value: `global:${skill.name}`,
+      label: skill.name,
+      group: "Global",
+      ...(skill.description !== undefined && { hint: truncate(skill.description) }),
+    });
+  }
+
+  for (const [id, entry] of projectEntries) {
+    const providers = (entry.providers ?? []).join(", ");
+    const branchHint = entry.branch ? ` (${entry.branch})` : "";
+    options.push({
+      value: `project:${id}`,
+      label: `${id}${branchHint}`,
+      group: "Project",
+      ...(providers !== "" && { hint: providers }),
+    });
+  }
+
+  return options;
+}
+
+function selectSkills(options: SelectableOption[]): Effect.Effect<string[], EngramError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const hasGroups = options.some((o) => o.group !== options[0]?.group);
+      const hint = styleText("dim", "↑↓ navigate  ·  space toggle   ·  enter confirm");
+      const result = hasGroups
+        ? await groupMultiselect<string>({
+            message: `Select skills to remove\n  ${hint}`,
+            options: buildGroupedOptions(options),
+            required: false,
+          })
+        : await multiselect<string>({
+            message: `Select skills to remove\n  ${hint}`,
+            options: options.map((o) => ({
+              value: o.value,
+              label: o.label,
+              ...(o.hint !== undefined && { hint: o.hint }),
+            })),
+            required: false,
+          });
+      if (isCancel(result)) return [];
+      return result;
+    },
+    catch: (e) => new EngramError({ message: String(e) }),
+  });
+}
+
+function buildGroupedOptions(
+  options: SelectableOption[],
+): Record<string, Array<{ value: string; label: string; hint?: string }>> {
+  const groups: Record<string, Array<{ value: string; label: string; hint?: string }>> = {};
+  for (const option of options) {
+    (groups[option.group] ??= []).push({
+      value: option.value,
+      label: option.label,
+      ...(option.hint !== undefined && { hint: option.hint }),
+    });
+  }
+  return groups;
+}
+
+function confirmRemoval(count: number): Effect.Effect<boolean, EngramError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const result = await confirm({
+        message: `Remove ${String(count)} skill${count === 1 ? "" : "s"}?`,
+      });
+      if (isCancel(result)) return false;
+      return result;
+    },
+    catch: (e) => new EngramError({ message: String(e) }),
+  });
+}
+
+function removeSkill(value: string): Effect.Effect<void, EngramError, FileSystem.FileSystem> {
+  const colonIndex = value.indexOf(":");
+  if (colonIndex === -1) {
+    return Effect.fail(new EngramError({ message: `invalid skill selection: ${value}` }));
+  }
+  const scope = value.slice(0, colonIndex);
+  const ref = value.slice(colonIndex + 1);
+  if (scope !== "global" && scope !== "project") {
+    return Effect.fail(new EngramError({ message: `invalid skill scope: ${scope}` }));
+  }
+  return RemoveCmd.run(ref, scope, false);
+}

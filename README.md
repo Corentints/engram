@@ -79,6 +79,8 @@ engram remove code-review                               # global: use the skill 
 
 ### `list` — show installed skills
 
+In an interactive terminal, `engram list` opens a selectable list grouped by `Global` and `Project`. Toggle skills with space, confirm with enter, then confirm the removal. In a non-TTY environment (scripts, CI), it falls back to the read-only listing.
+
 ```sh
 engram list
 engram list --scope project
