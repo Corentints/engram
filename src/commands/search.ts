@@ -1,14 +1,15 @@
-import { Console, Effect } from "effect";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import * as fs from "node:fs/promises";
+import { Console, Effect, Stream } from "effect";
+import { Command, FileSystem } from "@effect/platform";
+import type { CommandExecutor } from "@effect/platform";
 import * as os from "node:os";
 import * as path from "node:path";
 import { EngramError } from "../errors.js";
 import { resolveUrl, skillId } from "../source.js";
 import { extractDescription } from "../skill.js";
 
-const execFileAsync = promisify(execFile);
+/** Drain a byte stream (a process's stdout/stderr) into a decoded string. */
+const collectText = <E, R>(stream: Stream.Stream<Uint8Array, E, R>): Effect.Effect<string, E, R> =>
+  Stream.mkString(Stream.decodeText(stream));
 
 export interface RemoteSkill {
   path: string
@@ -21,7 +22,11 @@ export interface RemoteListing {
   skills: RemoteSkill[]
 }
 
-export const run = (source: string, query: string | undefined, subPath: string): Effect.Effect<void, EngramError> =>
+export const run = (
+  source: string,
+  query: string | undefined,
+  subPath: string,
+): Effect.Effect<void, EngramError, CommandExecutor.CommandExecutor | FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const url = resolveUrl(source);
     yield* Console.log(`Listing skills in ${source}...`);
@@ -39,23 +44,40 @@ export const run = (source: string, query: string | undefined, subPath: string):
     }
   });
 
-export function listRemoteSkills(url: string, registryPath: string): Effect.Effect<RemoteListing, EngramError> {
+export function listRemoteSkills(
+  url: string,
+  registryPath: string,
+): Effect.Effect<RemoteListing, EngramError, CommandExecutor.CommandExecutor | FileSystem.FileSystem> {
   return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     const tmp = path.join(os.tmpdir(), "engram-search");
 
+    // Run a git command in `tmp`, capturing stdout. Unlike Command.string, this surfaces a
+    // non-zero exit (e.g. a bad source URL) as a failure carrying the process's stderr.
     const git = (...args: string[]) =>
-      Effect.tryPromise({
-        try: () => execFileAsync("git", args, { cwd: tmp }).then(({ stdout }) => stdout),
-        catch: (e: unknown) => {
-          const err = e as { stderr?: string; message?: string };
-          return new EngramError({ message: `search failed: ${err.stderr ?? err.message ?? String(e)}` });
-        },
-      });
+      Effect.gen(function* () {
+        const command = Command.make("git", ...args).pipe(Command.workingDirectory(tmp));
+        const proc = yield* Command.start(command);
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [collectText(proc.stdout), collectText(proc.stderr), proc.exitCode],
+          { concurrency: "unbounded" },
+        );
+        if (exitCode !== 0) {
+          const detail = (stderr || stdout || `git exited with ${String(exitCode)}`).trim();
+          return yield* Effect.fail(new EngramError({ message: `search failed: ${detail}` }));
+        }
+        return stdout;
+      }).pipe(
+        Effect.scoped,
+        Effect.mapError((e) =>
+          e instanceof EngramError ? e : new EngramError({ message: `search failed: ${e.message}` }),
+        ),
+      );
 
-    yield* Effect.tryPromise({
-      try: () => fs.rm(tmp, { recursive: true, force: true }).then(() => fs.mkdir(tmp, { recursive: true })),
-      catch: (e) => new EngramError({ message: String(e) }),
-    });
+    yield* fs.remove(tmp, { recursive: true }).pipe(Effect.ignore);
+    yield* fs.makeDirectory(tmp, { recursive: true }).pipe(
+      Effect.mapError((e) => new EngramError({ message: e.message })),
+    );
 
     yield* git("clone", "--filter=blob:none", "--no-checkout", "--depth=1", url, tmp);
 
@@ -97,10 +119,7 @@ export function listRemoteSkills(url: string, registryPath: string): Effect.Effe
       { concurrency: "unbounded" },
     );
 
-    yield* Effect.tryPromise({
-      try: () => fs.rm(tmp, { recursive: true, force: true }),
-      catch: () => new EngramError({ message: "cleanup failed" }),
-    });
+    yield* fs.remove(tmp, { recursive: true }).pipe(Effect.ignore);
 
     return { basePath, skills };
   });
