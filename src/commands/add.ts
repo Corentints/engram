@@ -4,7 +4,7 @@ import { styleText } from "node:util";
 import { resolveUrl } from "../source.js";
 import { EngramError } from "../errors.js";
 import { listRemoteSkills, type RemoteSkill } from "./search.js";
-import { installSkills, parseProviderList, resolveProviders, resolveScope } from "./install.js";
+import { installSkills, splitCsv, resolveProviders, resolveScope } from "./install.js";
 
 export interface AddArgs {
   source: string
@@ -48,7 +48,7 @@ export const run = (args: AddArgs) =>
   });
 
 function selectSkills(skillArg: string, skills: RemoteSkill[]): Effect.Effect<string[], EngramError> {
-  const requested = parseProviderList(skillArg);
+  const requested = splitCsv(skillArg);
   if (requested.length > 0) {
     if (requested.includes("*")) return Effect.succeed(skills.map((s) => s.path));
     const available = new Set(skills.map((s) => s.path));

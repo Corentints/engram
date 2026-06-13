@@ -1,5 +1,5 @@
 import { Console, Effect } from "effect";
-import * as fs from "node:fs/promises";
+import { FileSystem } from "@effect/platform";
 import * as path from "node:path";
 import { loadManifest, saveManifest } from "../manifest.js";
 import { ALL_PROVIDERS, globalSkillsDir, parseProvider, projectSkillsDir } from "../providers/index.js";
@@ -9,7 +9,7 @@ export const run = (
   ref: string,
   scope: string,
   keepFiles: boolean,
-): Effect.Effect<void, EngramError> =>
+): Effect.Effect<void, EngramError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     if (scope === "project") {
       yield* removeProject(ref, keepFiles);
@@ -19,7 +19,7 @@ export const run = (
   });
 
 /** Project removal: `ref` is the manifest id (`source/skill`). */
-function removeProject(ref: string, keepFiles: boolean): Effect.Effect<void, EngramError> {
+function removeProject(ref: string, keepFiles: boolean): Effect.Effect<void, EngramError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const cwd = process.cwd();
     const manifest = yield* loadManifest(cwd);
@@ -43,7 +43,7 @@ function removeProject(ref: string, keepFiles: boolean): Effect.Effect<void, Eng
 }
 
 /** Global removal: `ref` is the skill path as shown by `engram list`. */
-function removeGlobal(skillPath: string): Effect.Effect<void, EngramError> {
+function removeGlobal(skillPath: string): Effect.Effect<void, EngramError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     let removed = false;
     for (const provider of ALL_PROVIDERS) {
@@ -57,17 +57,16 @@ function removeGlobal(skillPath: string): Effect.Effect<void, EngramError> {
   });
 }
 
-function removeIfExists(dest: string, label: string): Effect.Effect<boolean, EngramError> {
+function removeIfExists(dest: string, label: string): Effect.Effect<boolean, EngramError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
-    const exists = yield* Effect.tryPromise({
-      try: () => fs.access(dest).then(() => true).catch(() => false),
-      catch: (e) => new EngramError({ message: String(e) }),
-    });
+    const fs = yield* FileSystem.FileSystem;
+    const exists = yield* fs.exists(dest).pipe(
+      Effect.mapError((e) => new EngramError({ message: e.message })),
+    );
     if (!exists) return false;
-    yield* Effect.tryPromise({
-      try: () => fs.rm(dest, { recursive: true, force: true }),
-      catch: (e) => new EngramError({ message: `removing ${dest}: ${String(e)}` }),
-    });
+    yield* fs.remove(dest, { recursive: true }).pipe(
+      Effect.mapError((e) => new EngramError({ message: `removing ${dest}: ${e.message}` })),
+    );
     yield* Console.log(`✓ Removed ${label} at ${dest}`);
     return true;
   });

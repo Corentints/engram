@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { createRequire } from "node:module";
 import { Args, Command, Options } from "@effect/cli";
 // Import via subpaths so we don't pull @effect/platform-node's cluster barrel
 // (NodeClusterHttp/Socket → @effect/cluster, @effect/rpc, @effect/sql), which we don't use.
@@ -30,7 +31,7 @@ const addCmd = Command.make(
       AddCmd.run({
         source,
         skill,
-        providers: InstallCmd.parseProviderList(provider),
+        providers: InstallCmd.splitCsv(provider),
         scope,
         branch: Option.getOrUndefined(branch),
         path,
@@ -100,7 +101,8 @@ const engramCmd = Command.make("engram", {}, () => Effect.void).pipe(
   Command.withSubcommands([addCmd, installCmd, listCmd, removeCmd, syncCmd, searchCmd]),
 );
 
-const cli = Command.run(engramCmd, { name: "engram", version: "0.1.0" });
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
+const cli = Command.run(engramCmd, { name: "engram", version });
 
 Effect.suspend(() => cli(process.argv)).pipe(
   Effect.provide(NodeContext.layer),

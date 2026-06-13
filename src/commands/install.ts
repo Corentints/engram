@@ -1,6 +1,6 @@
 import { Console, Effect } from "effect";
 import { multiselect, isCancel } from "@clack/prompts";
-import * as fs from "node:fs/promises";
+import { FileSystem } from "@effect/platform";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadManifest, saveManifest, type SkillEntry } from "../manifest.js";
@@ -25,6 +25,7 @@ export interface InstallSkillOptions {
 /** Fetch a single skill from a source and link it into each provider directory. */
 export const installSkill = (opts: InstallSkillOptions) =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     const url = resolveUrl(opts.source);
     const sha = opts.sha ?? (yield* resolveRemoteSha(url, opts.branch));
 
@@ -37,10 +38,9 @@ export const installSkill = (opts: InstallSkillOptions) =>
     yield* sparseCheckout(url, repoSkillPath, sha, tmpDir);
 
     const skillSrc = path.join(tmpDir, repoSkillPath);
-    const exists = yield* Effect.tryPromise({
-      try: () => fs.access(skillSrc).then(() => true).catch(() => false),
-      catch: (e) => new EngramError({ message: String(e) }),
-    });
+    const exists = yield* fs.exists(skillSrc).pipe(
+      Effect.mapError((e) => new EngramError({ message: e.message })),
+    );
     if (!exists) {
       return yield* Effect.fail(
         new EngramError({ message: `skill path '${repoSkillPath}' not found in ${opts.source}` }),
@@ -49,12 +49,9 @@ export const installSkill = (opts: InstallSkillOptions) =>
 
     // Materialize a single canonical copy, then symlink it into each provider dir.
     const canonical = path.join(storeDir(), safeName);
-    yield* Effect.tryPromise({
-      try: () => fs.rm(canonical, { recursive: true, force: true }),
-      catch: (e) => new EngramError({ message: String(e) }),
-    });
+    yield* fs.remove(canonical, { recursive: true }).pipe(Effect.ignore);
     yield* copyDir(skillSrc, canonical);
-    yield* Effect.promise(() => fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {}));
+    yield* fs.remove(tmpDir, { recursive: true }).pipe(Effect.ignore);
 
     for (const provider of opts.providers) {
       const dest =
@@ -116,7 +113,8 @@ export function resolveProviders(raw: string[]): Effect.Effect<Provider[], Engra
   });
 }
 
-export const parseProviderList = (raw: string): string[] =>
+/** Split a comma-separated CLI argument (providers, skills, …) into trimmed, non-empty items. */
+export const splitCsv = (raw: string): string[] =>
   raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
 /** CLI entry for `engram install <source> <skill>`: a direct, non-interactive single install. */
@@ -129,7 +127,7 @@ export const runInstall = (
   subPath: string,
 ) =>
   Effect.gen(function* () {
-    const providers = yield* resolveProviders(parseProviderList(providerRaw));
+    const providers = yield* resolveProviders(splitCsv(providerRaw));
     yield* installSkill({
       source,
       skill,
