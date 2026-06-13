@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { createRequire } from "node:module";
 import { Args, Command, Options } from "@effect/cli";
+import * as ValidationError from "@effect/cli/ValidationError";
 // Import via subpaths so we don't pull @effect/platform-node's cluster barrel
 // (NodeClusterHttp/Socket → @effect/cluster, @effect/rpc, @effect/sql), which we don't use.
 import * as NodeContext from "@effect/platform-node/NodeContext";
@@ -107,6 +108,15 @@ const { version } = createRequire(import.meta.url)("../package.json") as { versi
 const cli = Command.run(engramCmd, { name: "engram", version });
 
 Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.catchAll((error) => {
+    if (ValidationError.isValidationError(error)) {
+      // CliApp.run already rendered the validation error to stderr.
+      return Effect.sync(() => process.exit(1));
+    }
+    return Console.error(`unexpected error: ${String(error)}`).pipe(
+      Effect.flatMap(() => Effect.sync(() => process.exit(1))),
+    );
+  }),
   Effect.provide(NodeContext.layer),
   NodeRuntime.runMain,
 );
